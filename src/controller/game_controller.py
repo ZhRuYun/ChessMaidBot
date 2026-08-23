@@ -3,15 +3,16 @@
 棋局状态的唯一写路径: GUI 只发意图 (apply/undo/new_game), 状态变更经信号广播
 职责: 走法应用、记谱、终局判定与归档、对弈模式与教学开关的状态保持
 """
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import chess
 from PySide6.QtCore import QObject, Signal
 
-from ..agents.base import AgentRequest, PositionSnapshot
+from ..agents.base import AgentRequest, AgentTools, PositionSnapshot
 from ..core.board_state import BoardState
 from ..core.game_record import MoveHistoryManager
 from ..database.history_store import HistoryStore
+from ..engine.stockfish_client import StockfishClient
 from .game_modes import GameMode, GameModeManager
 from .teaching_triggers import TeachingTriggers
 
@@ -169,5 +170,25 @@ class GameController(QObject):
             game_over_reason=status["reason"] if status["is_over"] else "",
         )
 
+    def _agent_read_database(self, category: str = "history", params: Optional[Dict[str, Any]] = None) -> Any:
+        """为 LLM 提供的数据库读取方法 (模块5方法 1 & 2)"""
+        params = params or {}
+        return self.history_store.query_database(category=category, **params)
+
+    def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None) -> Any:
+        """为 LLM 提供的 Stockfish 状态读取方法 (模块5方法 3 & 4)"""
+        params = params or {}
+        with StockfishClient() as client:
+            return client.get_state(fen=self.board_state.get_fen(), state_type=state_type, **params)
+
     def build_agent_request(self, user_message: str, persona_prompt: str) -> AgentRequest:
-        return AgentRequest(user_message=user_message, persona_prompt=persona_prompt, snapshot=self.get_snapshot())
+        tools = AgentTools(
+            read_database=self._agent_read_database,
+            read_engine_state=self._agent_read_engine_state,
+        )
+        return AgentRequest(
+            user_message=user_message,
+            persona_prompt=persona_prompt,
+            snapshot=self.get_snapshot(),
+            tools=tools,
+        )

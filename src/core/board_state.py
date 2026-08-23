@@ -146,12 +146,13 @@ class BoardState:
         if not self.board.move_stack:
             return None
 
-        last_move = self.board.peek()
-        self.board.pop()
+        # 在 pop 之前根据当前局面解析被吃棋子
+        # (因为走完之后 target square 上是移动后的棋子，但在 python-chess 中 board.is_capture(last_move) 需要在走棋前或通过 pop 判定)
+        last_move = self.board.pop()
         if self.move_stack_san:
             self.move_stack_san.pop()
 
-        # pop 后局面回到走法之前, 可直接复用被吃子判定逻辑
+        # pop 之后恢复到了 last_move 发生之前的局面，此时调用 _captured_piece_of 能准确获取被吃子
         captured = self._captured_piece_of(last_move)
         if captured:
             key = self._capture_color_key(captured)

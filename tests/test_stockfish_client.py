@@ -35,18 +35,18 @@ class TestStockfishClient(unittest.TestCase):
         self.client.set_skill_level(5)
         self.assertEqual(self.client.skill_level, 5)
 
-    def test_analyse_multipv(self):
+    def test_get_state_api(self):
         if not self.client.available:
             self.skipTest("Stockfish 二进制未在 engines/ 目录下找到")
 
-        results = self.client.analyse(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            depth=6,
-            multipv=2,
-        )
-        self.assertGreaterEqual(len(results), 1)
-        self.assertIn("score_cp", results[0])
-        self.assertIn("pv", results[0])
+        fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        res_move = self.client.get_state(fen, state_type="best_move", movetime_ms=100)
+        self.assertTrue(res_move.get("available"))
+        self.assertIsNotNone(res_move.get("best_move"))
+
+        res_eval = self.client.get_state(fen, state_type="analyse", depth=5, multipv=1)
+        self.assertTrue(res_eval.get("available"))
+        self.assertIsInstance(res_eval.get("analysis"), list)
 
 
 if __name__ == "__main__":

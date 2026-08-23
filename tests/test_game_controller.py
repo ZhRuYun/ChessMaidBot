@@ -152,6 +152,13 @@ class TestGameController(unittest.TestCase):
         self.assertEqual(request.user_message, "你好")
         self.assertEqual(request.persona_prompt, "人设")
         self.assertEqual(request.snapshot.fen, snapshot.fen)
+        self.assertIsNotNone(request.tools)
+        self.assertIsNotNone(request.tools.read_database)
+        self.assertIsNotNone(request.tools.read_engine_state)
+
+        # 验证 Agent 工具调用
+        db_res = request.tools.read_database("history")
+        self.assertEqual(db_res["category"], "history")
 
     def test_mode_headers_written_to_pgn(self):
         self.controller.set_mode(GameMode.VS_ENGINE)

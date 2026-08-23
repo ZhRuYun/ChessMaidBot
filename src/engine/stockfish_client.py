@@ -117,6 +117,35 @@ class StockfishClient:
                 break
         return [results[k] for k in sorted(results)]
 
+    def get_state(self, fen: str, state_type: str = "best_move", **kwargs) -> Dict[str, object]:
+        """为 Agent 与外部模块提供的统一引擎状态读取接口
+        
+        Args:
+            fen: 待评估的 FEN 局面
+            state_type: 读取的引擎状态部分 ("best_move" | "analyse" | "eval")
+            **kwargs: 额外参数 (movetime_ms, depth, multipv 等)
+            
+        Returns:
+            引擎状态结果字典
+        """
+        if not self.available:
+            return {"available": False, "error": "Stockfish binary not found"}
+
+        try:
+            if state_type == "best_move":
+                movetime_ms = kwargs.get("movetime_ms", 500)
+                move = self.best_move(fen, movetime_ms=movetime_ms)
+                return {"available": True, "state_type": "best_move", "best_move": move}
+            elif state_type in ("analyse", "eval"):
+                depth = kwargs.get("depth", 12)
+                multipv = kwargs.get("multipv", 1)
+                analysis = self.analyse(fen, depth=depth, multipv=multipv)
+                return {"available": True, "state_type": "analyse", "analysis": analysis}
+            else:
+                return {"available": True, "state_type": state_type, "error": f"Unknown state_type: {state_type}"}
+        except Exception as e:
+            return {"available": False, "error": str(e)}
+
     def quit(self):
         if self._proc is not None:
             try:

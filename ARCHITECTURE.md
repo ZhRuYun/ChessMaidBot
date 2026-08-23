@@ -103,13 +103,15 @@
     * 提供 `start()`, `quit()`, `set_skill_level(level: 0~20)`。
     * `best_move(fen, movetime_ms)`: 计算最佳单步走法。
     * `analyse(fen, depth, multipv)`: 返回多 PV 分析结果列表（包含评分 `score_cp` 与着法主变例 `pv`）。
+    * `get_state(fen, state_type, **kwargs)`: 为 Agent 与上层模块提供统一步进/分析状态查询接口。
 
 ### 模块 5: Agent 接口及方法库 (`src/agents/`)
 * **设计原则**：面向 LLM 对话的抽象与标准化上下文打包。
 * **主要文件**：
   * `base.py`:
     * `PositionSnapshot`: 纯数据类，打包 FEN、PGN、当前行棋方、合法走法数、将军状态、终局原因。
-    * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history`）。
+    * `AgentTools`: 提供给 LLM 的方法库契约（数据库读取、Stockfish 状态读取等 4 类能力）。
+    * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history` + `tools`）。
     * `ChessAgent`: 抽象基类，定义 `reply(self, request: AgentRequest) -> str`。
   * `echo_agent.py` (`EchoAgent`): 本地回声代理，用于无 LLM API 时的开发测试与链路占位。
 
@@ -119,7 +121,7 @@
   * `history_store.py` (`HistoryStore`):
     * 存储根目录 `data/games/`。
     * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档。
-    * 预留开局库 (ECO/Polyglot)、EPD 战术库、残局库接入点。
+    * 提供统一的 `query_database(category, **kwargs)` 接口，支持历史棋局、开局库、战术库、残局库等分类检索与格式转换。
 
 ---
 

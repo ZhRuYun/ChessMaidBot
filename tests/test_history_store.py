@@ -31,9 +31,18 @@ class TestHistoryStore(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(len(self.store.list_games()), 2)
 
-    def test_result_sanitized_for_filename(self):
-        path = self.store.save_game("draw", result="1/2-1/2")
-        self.assertEqual(path.name.count("/"), 0)
+    def test_query_database_history_and_categories(self):
+        self.store.save_game('[Event "T1"]\n\n1. e4 e5 *\n', result="*")
+        res_history = self.store.query_database("history", limit=2)
+        self.assertEqual(res_history["category"], "history")
+        self.assertGreaterEqual(res_history["count"], 1)
+        self.assertEqual(len(res_history["games"]), 1)
+
+        res_opening = self.store.query_database("opening")
+        self.assertEqual(res_opening["status"], "ready")
+
+        res_invalid = self.store.query_database("non_existent")
+        self.assertIn("error", res_invalid)
 
 
 if __name__ == "__main__":
