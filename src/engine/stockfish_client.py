@@ -70,7 +70,8 @@ class StockfishClient:
     def set_skill_level(self, skill: int):
         """官方 UCI 选项: Skill Level 0(最弱)-20(最强)"""
         self.skill_level = max(0, min(20, skill))
-        self._send(f"setoption name Skill Level value {self.skill_level}")
+        if self._proc is not None and self._proc.stdin is not None:
+            self._send(f"setoption name Skill Level value {self.skill_level}")
 
     def _sync(self):
         self._send("isready")
@@ -119,8 +120,15 @@ class StockfishClient:
     def quit(self):
         if self._proc is not None:
             try:
-                self._send("quit")
-                self._proc.wait(timeout=3)
+                if self._proc.stdin:
+                    try:
+                        self._send("quit")
+                    except Exception:
+                        pass
+                    self._proc.stdin.close()
+                if self._proc.stdout:
+                    self._proc.stdout.close()
+                self._proc.wait(timeout=1)
             except Exception:
                 self._proc.kill()
             finally:
