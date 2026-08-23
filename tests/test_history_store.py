@@ -32,10 +32,28 @@ class TestHistoryStore(unittest.TestCase):
         self.assertIn("学者将死", parsed["summary"])
 
     def test_no_overwrite_on_same_second(self):
-        first = self.store.save_game("game-a", result="1-0")
-        second = self.store.save_game("game-b", result="1-0")
+        first = self.store.save_game('[Event "A"]\n\n1. e4 e5 1-0\n', result="1-0")
+        second = self.store.save_game('[Event "B"]\n\n1. d4 d5 1-0\n', result="1-0")
         self.assertNotEqual(first, second)
         self.assertEqual(len(self.store.list_games()), 2)
+
+    def test_filter_useless_games(self):
+        # 0 步认输或求和
+        empty_resign = '[Event "Casual"]\n[Result "0-1"]\n\n0-1\n'
+        empty_draw = '[Event "Casual"]\n[Result "1/2-1/2"]\n\n1/2-1/2\n'
+        valid_game = '[Event "Casual"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n'
+
+        self.store.save_game(empty_resign, result="0-1")
+        self.store.save_game(empty_draw, result="1/2-1/2")
+        self.store.save_game(valid_game, result="1-0")
+
+        # 默认过滤
+        useful_games = self.store.list_games(filter_useless=True)
+        self.assertEqual(len(useful_games), 1)
+
+        # 不加过滤列出全部
+        all_games = self.store.list_games(filter_useless=False)
+        self.assertEqual(len(all_games), 3)
 
     def test_query_database_history_and_categories(self):
         self.store.save_game('[Event "T1"]\n\n1. e4 e5 *\n', result="*")

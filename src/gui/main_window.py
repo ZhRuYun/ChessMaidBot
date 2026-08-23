@@ -1,16 +1,19 @@
 """
 主窗口 (模块1 - GUI 装配层)
 负责协调 UI 布局（左侧:记谱表，中央:棋盘，右侧:LLM 对话窗口）
-处理用户点击（新对局、悔棋、翻转、认输、求和、导出），与 GameController 进行全双工信号对接
+处理用户交互（新对局、悔棋、翻转、认输、求和、一键导出 PGN+FEN、主动询问LLM、落子自动触发教学）
 """
+from typing import Optional
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLabel, QMessageBox, QFileDialog, QApplication
+    QLabel, QMessageBox, QApplication
 )
+from PySide6.QtCore import QThread, Signal
 import chess
 
-from ..agents.base import ChessAgent
+from ..agents.base import ChessAgent, AgentRequest
 from ..agents.echo_agent import EchoAgent
+from ..agents.prompt_builder import PromptBuilder
 from ..config import DEFAULT_MAID_PERSONA
 from ..controller.game_controller import GameController
 from .chess_board import ChessBoardWidget
@@ -19,15 +22,56 @@ from .chat_panel import ChatPanel
 from .control_bar import ControlBar
 
 
+class LLMWorker(QThread):
+    """异步执行 LLM 请求的后台线程，配合 UI 显示 loading spinner"""
+    response_ready = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, agent: ChessAgent, request: AgentRequest, parent=None):
+        super().__init__(parent)
+        self.agent = agent
+        self.request = request
+
+    def run(self):
+        try:
+            reply = self.agent.reply(self.request)
+            self.response_ready.emit(reply)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     def __init__(self, agent: ChessAgent = None, controller: GameController = None):
         super().__init__()
         self.setWindowTitle("ChessMaidBot - 国际象棋 AI 女仆教学对弈系统")
-        self.resize(1320, 810)
-        self.setStyleSheet("background-color: #14141a;")
+        self.resize(1340, 820)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #0b0f19;
+            }
+            QWidget {
+                color: #f1f5f9;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            }
+            QMessageBox {
+                background-color: #1e222d;
+                color: #f1f5f9;
+            }
+            QMessageBox QPushButton {
+                background-color: #334155;
+                color: #ffffff;
+                border: 1px solid #475569;
+                border-radius: 4px;
+                padding: 5px 12px;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #475569;
+            }
+        """)
 
         self.controller = controller or GameController()
         self.agent = agent or EchoAgent(persona_prompt=DEFAULT_MAID_PERSONA)
+        self._llm_thread: Optional[LLMWorker] = None
 
         # 注册 LLM 终局总结回调
         self.controller.set_llm_summary_provider(self._generate_llm_summary)
@@ -40,30 +84,29 @@ class MainWindow(QMainWindow):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setContentsMargins(16, 14, 16, 14)
         main_layout.setSpacing(12)
 
-        # 1. 顶部控制栏
+        # 1. 顶部控制栏 (现代极简暗黑风格)
         self.control_bar = ControlBar(self)
         self.control_bar.new_game_requested.connect(self.on_new_game)
         self.control_bar.undo_requested.connect(self.on_undo)
         self.control_bar.flip_requested.connect(self.on_flip)
         self.control_bar.resign_requested.connect(self.on_resign)
         self.control_bar.draw_requested.connect(self.on_draw)
-        self.control_bar.export_pgn_requested.connect(self.on_export_pgn)
-        self.control_bar.export_fen_requested.connect(self.on_export_fen)
+        self.control_bar.export_state_requested.connect(self.on_export_game_state)
         self.control_bar.mode_changed.connect(self.controller.set_mode_label)
         self.control_bar.elo_changed.connect(self.controller.set_engine_elo)
         main_layout.addWidget(self.control_bar)
 
-        # 2. 中间核心区：左侧记谱表 + 中央棋盘 + 右侧LLM对话 (三栏经典现代布局)
+        # 2. 中间核心区：左侧记谱表 + 中央棋盘 + 右侧LLM对话 (三栏现代极简布局)
         content_layout = QHBoxLayout()
         content_layout.setSpacing(16)
 
         # [左侧]：走法历史双栏记谱表
         history_container = QVBoxLayout()
-        history_title = QLabel("📜 对局记谱 (Move List)")
-        history_title.setStyleSheet("color: #bbb; font-weight: bold; font-size: 13px;")
+        history_title = QLabel("📜 走法记谱 (Moves)")
+        history_title.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 13px; padding-bottom: 2px;")
         history_container.addWidget(history_title)
 
         self.history_panel = MoveHistoryPanel(self)
@@ -74,7 +117,7 @@ class MainWindow(QMainWindow):
         # [中央]：棋盘区域 + 行动与将军状态指示
         board_container = QVBoxLayout()
         self.status_bar_label = QLabel("当前行动: 白方 (White)")
-        self.status_bar_label.setStyleSheet("color: #f1faee; font-size: 15px; font-weight: bold; padding: 4px;")
+        self.status_bar_label.setStyleSheet("color: #38bdf8; font-size: 14px; font-weight: 700; padding: 4px;")
         board_container.addWidget(self.status_bar_label)
 
         self.chess_board = ChessBoardWidget(self.controller.board_state, self)
@@ -85,6 +128,7 @@ class MainWindow(QMainWindow):
         # [右侧]：LLM 女仆互动对话窗口
         self.chat_panel = ChatPanel(self.controller.teaching, self)
         self.chat_panel.message_sent.connect(self.on_user_chat_message)
+        self.chat_panel.ask_llm_requested.connect(self.on_ask_llm_requested)
         self.chat_panel.teaching_triggers_changed.connect(self.controller.set_teaching)
         content_layout.addWidget(self.chat_panel)
 
@@ -102,8 +146,14 @@ class MainWindow(QMainWindow):
 
     def _generate_llm_summary(self, snapshot) -> str:
         """为终局持久化生成高质量的 LLM 总结"""
+        custom_prompt = PromptBuilder.build_custom_prompt(
+            snapshot=snapshot,
+            triggers=self.controller.teaching,
+            is_auto_move=False,
+            extra_note="本局已终局，请为对局归档提供精准全面的技术复盘总结。",
+        )
         req = self.controller.build_agent_request(
-            user_message="请对本局对弈进行全面的复盘总结，点评双方亮点与失误。",
+            user_message=custom_prompt,
             persona_prompt=DEFAULT_MAID_PERSONA,
         )
         return self.agent.reply(req)
@@ -112,27 +162,39 @@ class MainWindow(QMainWindow):
 
     def on_status_changed(self, text: str, in_check: bool):
         self.status_bar_label.setText(text)
-        color = "#ff5252" if in_check else "#f1faee"
+        color = "#ef4444" if in_check else "#38bdf8"
         self.status_bar_label.setStyleSheet(
-            f"color: {color}; font-size: 15px; font-weight: bold; padding: 4px;"
+            f"color: {color}; font-size: 14px; font-weight: 700; padding: 4px;"
         )
 
     def on_engine_thinking(self, thinking: bool):
         if thinking:
-            self.status_bar_label.setText("🤖 Stockfish 思考中 (Thinking)...")
-            self.status_bar_label.setStyleSheet("color: #ffa726; font-size: 15px; font-weight: bold; padding: 4px;")
+            self.status_bar_label.setText("🤖 Stockfish 深度思考中...")
+            self.status_bar_label.setStyleSheet("color: #fbbf24; font-size: 14px; font-weight: 700; padding: 4px;")
             self.chess_board.setEnabled(False)
         else:
             self.chess_board.setEnabled(True)
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
-        """教学触发: 当下局面评估 (将军提醒)"""
+        """
+        要求2：若总开关开启，玩家每走一步棋，根据棋盘现状信息 (PGN, FEN) 和 4 个子开关启动情况，
+        向 LLM 发送定制 prompt 并等待回复 (异步 + loading 转圈动效)
+        """
         triggers = self.controller.teaching
-        if triggers.master_enabled and triggers.eval_current_position and self.controller.board_state.is_check():
-            side_cn = "白方" if was_white else "黑方"
-            self.chat_panel.append_maid_message(
-                f"主人，**{side_cn}** 走出了 **`{san}`** 并发动了将军！请仔细应对防守哦。"
-            )
+        if not triggers.master_enabled:
+            return
+
+        # 构建定制 prompt
+        snapshot = self.controller.get_snapshot()
+        custom_prompt = PromptBuilder.build_custom_prompt(
+            snapshot=snapshot,
+            triggers=triggers,
+            is_auto_move=True,
+        )
+
+        side_cn = "白方" if was_white else "黑方"
+        self.chat_panel.append_user_message(f"*(落子: {side_cn} `{san}` - 触发教学分析)*")
+        self._dispatch_llm_request(custom_prompt)
 
     def on_game_over(self, status: dict):
         reason = status.get("reason", "对局结束")
@@ -186,37 +248,62 @@ class MainWindow(QMainWindow):
         elif not res.get("accepted"):
             QMessageBox.information(self, "求和结果", res.get("reason", "求和未成功。"))
 
-    def on_export_pgn(self):
-        """导出 PGN 棋谱文件"""
-        pgn_text = self.controller.export_pgn()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出 PGN 棋谱", "game.pgn", "PGN Files (*.pgn);;All Files (*)"
-        )
-        if file_path:
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(pgn_text)
-                QMessageBox.information(self, "导出成功", f"PGN 棋谱已成功导出至:\n{file_path}")
-            except OSError as e:
-                QMessageBox.critical(self, "导出失败", f"导出失败: {str(e)}")
+    def on_export_game_state(self):
+        """
+        要求6：一键将 PGN + FEN 码导出到系统剪贴板中
+        """
+        pgn_text = self.controller.export_pgn().strip()
+        fen_str = self.controller.get_fen().strip()
 
-    def on_export_fen(self):
-        """导出 FEN 字符串并复制到剪贴板"""
-        fen_str = self.controller.get_fen()
-        QApplication.clipboard().setText(fen_str)
+        combined_export = f"""=== PGN ===\n{pgn_text}\n\n=== FEN ===\n{fen_str}"""
+
+        QApplication.clipboard().setText(combined_export)
         QMessageBox.information(
-            self, "导出 FEN 成功",
-            f"当前局面的 FEN 码已成功复制到系统剪贴板！\n\nFEN: {fen_str}"
+            self,
+            "导出棋局状态成功",
+            "已一键将【PGN + FEN】完整棋局状态复制到系统剪切板！\n可直接粘贴使用。"
         )
 
     # ---------- LLM 对话链路 ----------
 
-    def on_user_chat_message(self, message: str):
-        if not self.controller.teaching.master_enabled:
-            self.chat_panel.append_maid_message("*(当前教学总开关已关闭，女仆处于静音状态。)*")
-            return
+    def on_ask_llm_requested(self):
+        """
+        要求4：主动询问 LLM 按钮触发的定制 prompt
+        """
+        triggers = self.controller.teaching
+        snapshot = self.controller.get_snapshot()
+        custom_prompt = PromptBuilder.build_custom_prompt(
+            snapshot=snapshot,
+            triggers=triggers,
+            is_auto_move=False,
+        )
+        self.chat_panel.append_user_message("*(点击了「主动询问女仆指导」)*")
+        self._dispatch_llm_request(custom_prompt)
 
+    def on_user_chat_message(self, message: str):
+        """手动输入框发送消息"""
+        self._dispatch_llm_request(message)
+
+    def _dispatch_llm_request(self, message: str):
+        """异步调度 LLM 请求，展示 Loading 旋转控件"""
+        if self._llm_thread is not None and self._llm_thread.isRunning():
+            self._llm_thread.terminate()
+            self._llm_thread.wait(300)
+
+        self.chat_panel.set_loading(True)
         request = self.controller.build_agent_request(message, persona_prompt=DEFAULT_MAID_PERSONA)
-        reply = self.agent.reply(request)
+
+        self._llm_thread = LLMWorker(self.agent, request, parent=self)
+        self._llm_thread.response_ready.connect(self._on_llm_response)
+        self._llm_thread.failed.connect(self._on_llm_failed)
+        self._llm_thread.start()
+
+    def _on_llm_response(self, reply: str):
+        self.chat_panel.set_loading(False)
         self.chat_panel.append_maid_message(reply)
+
+    def _on_llm_failed(self, error_msg: str):
+        self.chat_panel.set_loading(False)
+        self.chat_panel.append_maid_message(f"*(女仆回复出现异常: {error_msg})*")
+
 

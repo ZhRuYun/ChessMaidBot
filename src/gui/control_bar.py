@@ -1,9 +1,9 @@
 """
 控制栏与状态栏控件 (模块1 - GUI)
-包含模式选择、目标 Elo/难度调节、新局/悔棋/翻转/认输/求和/导出功能
+包含模式选择、目标 Elo/难度调节、新局/悔棋/翻转/认输/求和/导出棋局状态功能
 """
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QPushButton, QLabel, QComboBox, QSpinBox
+    QWidget, QHBoxLayout, QPushButton, QLabel, QComboBox, QSpinBox, QFrame
 )
 from PySide6.QtCore import Signal
 
@@ -19,97 +19,148 @@ class ControlBar(QWidget):
     draw_requested = Signal()
     mode_changed = Signal(str)
     elo_changed = Signal(int)
-    export_pgn_requested = Signal()
-    export_fen_requested = Signal()
+    export_state_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("ControlBar")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
 
         # 1. 模式选择下拉框
-        mode_label = QLabel("对弈模式:")
-        mode_label.setStyleSheet("color: #ccc; font-weight: bold; font-size: 13px;")
+        mode_label = QLabel("模式:")
+        mode_label.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
         self.mode_combo = QComboBox(self)
         self.mode_combo.addItems([MODE_LABELS[mode] for mode in GameMode])
         self.mode_combo.setStyleSheet("""
             QComboBox {
-                background-color: #2b2b38;
-                color: #fff;
-                border: 1px solid #4f4f66;
-                border-radius: 5px;
-                padding: 4px 8px;
+                background-color: #1e222d;
+                color: #f1f5f9;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 5px 10px;
                 font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox:hover {
+                border-color: #475569;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1e222d;
+                color: #f1f5f9;
+                selection-background-color: #3b82f6;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px;
             }
         """)
         self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
 
         # 2. Stockfish 目标 Elo 设定微调框
-        self.elo_label = QLabel("引擎 Elo:")
-        self.elo_label.setStyleSheet("color: #ffa726; font-weight: bold; font-size: 12px;")
+        self.elo_label = QLabel("Elo:")
+        self.elo_label.setStyleSheet("color: #fbbf24; font-weight: 600; font-size: 13px;")
         self.elo_spin = QSpinBox(self)
         self.elo_spin.setRange(STOCKFISH_MIN_ELO, STOCKFISH_MAX_ELO)
         self.elo_spin.setSingleStep(50)
         self.elo_spin.setValue(STOCKFISH_DEFAULT_ELO)
         self.elo_spin.setStyleSheet("""
             QSpinBox {
-                background-color: #2b2b38;
-                color: #fff;
-                border: 1px solid #4f4f66;
-                border-radius: 5px;
-                padding: 3px 6px;
+                background-color: #1e222d;
+                color: #f1f5f9;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px 8px;
                 font-size: 12px;
+                font-weight: 500;
+            }
+            QSpinBox:hover {
+                border-color: #475569;
             }
         """)
         self.elo_spin.valueChanged.connect(self.elo_changed.emit)
 
-        # 3. 对局控制按钮组
-        self.btn_new_game = QPushButton("🆕 新对局")
+        # 分割线
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setStyleSheet("color: #334155;")
+
+        # 3. 对局控制按钮组 (极简现代扁平风格)
+        self.btn_new_game = QPushButton("🆕 新局")
         self.btn_undo = QPushButton("↩️ 悔棋")
         self.btn_flip = QPushButton("🔄 翻转")
         self.btn_draw = QPushButton("🤝 求和")
         self.btn_resign = QPushButton("🏳️ 认输")
-        self.btn_export_pgn = QPushButton("📋 PGN")
-        self.btn_export_fen = QPushButton("🏷️ FEN")
 
-        buttons = [
-            self.btn_new_game, self.btn_undo, self.btn_flip,
-            self.btn_draw, self.btn_resign, self.btn_export_pgn, self.btn_export_fen
+        # 导出棋局状态按钮 (一键导出 PGN + FEN 到剪切板)
+        self.btn_export_state = QPushButton("📋 导出棋局状态 (PGN+FEN)")
+
+        standard_buttons = [
+            self.btn_new_game, self.btn_undo, self.btn_flip, self.btn_draw
         ]
 
-        for btn in buttons:
+        for btn in standard_buttons:
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #333345;
-                    color: #e0e0e0;
-                    border: 1px solid #4a4a60;
-                    border-radius: 5px;
-                    padding: 5px 9px;
+                    background-color: #1e222d;
+                    color: #e2e8f0;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 6px 12px;
                     font-size: 12px;
                     font-weight: 500;
                 }
                 QPushButton:hover {
-                    background-color: #44445c;
-                    color: white;
-                    border: 1px solid #64b5f6;
+                    background-color: #282f3e;
+                    color: #ffffff;
+                    border-color: #60a5fa;
+                }
+                QPushButton:pressed {
+                    background-color: #1a1e28;
                 }
             """)
 
         self.btn_resign.setStyleSheet("""
             QPushButton {
-                background-color: #4a2828;
-                color: #ffcccc;
-                border: 1px solid #773333;
-                border-radius: 5px;
-                padding: 5px 9px;
+                background-color: #31181e;
+                color: #fca5a5;
+                border: 1px solid #5c242e;
+                border-radius: 6px;
+                padding: 6px 12px;
                 font-size: 12px;
                 font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #663333;
-                color: white;
-                border: 1px solid #ff5555;
+                background-color: #451d27;
+                color: #ffffff;
+                border-color: #ef4444;
+            }
+            QPushButton:pressed {
+                background-color: #261217;
+            }
+        """)
+
+        self.btn_export_state.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #38bdf8;
+                border: 1px solid #0284c7;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+                color: #ffffff;
+                border-color: #38bdf8;
+            }
+            QPushButton:pressed {
+                background-color: #075985;
             }
         """)
 
@@ -118,21 +169,20 @@ class ControlBar(QWidget):
         self.btn_flip.clicked.connect(self.flip_requested.emit)
         self.btn_draw.clicked.connect(self.draw_requested.emit)
         self.btn_resign.clicked.connect(self.resign_requested.emit)
-        self.btn_export_pgn.clicked.connect(self.export_pgn_requested.emit)
-        self.btn_export_fen.clicked.connect(self.export_fen_requested.emit)
+        self.btn_export_state.clicked.connect(self.export_state_requested.emit)
 
         layout.addWidget(mode_label)
         layout.addWidget(self.mode_combo)
         layout.addWidget(self.elo_label)
         layout.addWidget(self.elo_spin)
+        layout.addWidget(sep1)
         layout.addWidget(self.btn_new_game)
         layout.addWidget(self.btn_undo)
         layout.addWidget(self.btn_flip)
         layout.addWidget(self.btn_draw)
         layout.addWidget(self.btn_resign)
         layout.addStretch()
-        layout.addWidget(self.btn_export_pgn)
-        layout.addWidget(self.btn_export_fen)
+        layout.addWidget(self.btn_export_state)
 
         self._update_elo_visibility(self.mode_combo.currentText())
 
@@ -144,4 +194,5 @@ class ControlBar(QWidget):
         is_vs_engine = MODE_LABELS[GameMode.VS_ENGINE] == text
         self.elo_label.setVisible(is_vs_engine)
         self.elo_spin.setVisible(is_vs_engine)
+
 

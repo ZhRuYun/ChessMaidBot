@@ -38,9 +38,43 @@ class HistoryStore:
         path.write_text(full_content, encoding="utf-8")
         return path
 
-    def list_games(self) -> List[Path]:
-        """列出所有已保存的历史棋局"""
-        return sorted(self.root.glob("*.pgn"))
+    @staticmethod
+    def is_useful_game(pgn_text: str) -> bool:
+        """
+        判断棋局是否为有效/有用棋局。
+        排除'还未开始就认输'、'还未开始就求和'等 0 步着法的无效棋局。
+        """
+        if not pgn_text or not pgn_text.strip():
+            return False
+        
+        # 提取走法主体部分（去掉 [Header] 行和注释）
+        lines = [line.strip() for line in pgn_text.splitlines() if line.strip() and not line.startswith("[") and not line.startswith("%")]
+        moves_body = " ".join(lines).strip()
+        
+        # 如果走法主体为空，或仅为终局标记 ("*", "1-0", "0-1", "1/2-1/2")，说明 0 步走棋
+        results = {"*", "1-0", "0-1", "1/2-1/2"}
+        if not moves_body or moves_body in results:
+            return False
+        
+        # 必须至少包含第一步有效着法（例如 "1." 或 "1..."）
+        return "1." in moves_body
+
+    def list_games(self, filter_useless: bool = True) -> List[Path]:
+        """列出所有已保存的历史棋局，默认自动过滤 0 步/未开局即结束的无用棋局"""
+        all_files = sorted(self.root.glob("*.pgn"))
+        if not filter_useless:
+            return all_files
+
+        useful_files = []
+        for p in all_files:
+            try:
+                raw_text = self.load_text(p)
+                parsed = self.parse_game_file(raw_text)
+                if self.is_useful_game(parsed["pgn"]):
+                    useful_files.append(p)
+            except Exception:
+                continue
+        return useful_files
 
     @staticmethod
     def load_text(path: Path) -> str:
@@ -70,7 +104,8 @@ class HistoryStore:
         category = category.lower()
         if category == "history":
             limit = kwargs.get("limit", 5)
-            games = self.list_games()
+            filter_useless = kwargs.get("filter_useless", True)
+            games = self.list_games(filter_useless=filter_useless)
             recent_games = games[-limit:] if limit > 0 else games
             game_summaries = []
             for g in recent_games:

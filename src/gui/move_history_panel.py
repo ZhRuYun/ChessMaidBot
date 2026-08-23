@@ -24,24 +24,25 @@ class MoveHistoryPanel(QWidget):
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setStyleSheet("""
             QTableWidget {
-                background-color: #2b2b2b;
-                color: #e0e0e0;
-                gridline-color: #3e3e3e;
-                font-family: "Segoe UI", "Consolas", sans-serif;
+                background-color: #0f172a;
+                color: #e2e8f0;
+                gridline-color: #1e293b;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                 font-size: 13px;
-                border: 1px solid #3e3e3e;
-                border-radius: 6px;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
             }
             QHeaderView::section {
-                background-color: #1e1e1e;
-                color: #aaa;
-                font-weight: bold;
+                background-color: #1e293b;
+                color: #94a3b8;
+                font-weight: 600;
                 padding: 6px;
-                border: 1px solid #333;
+                border: none;
+                border-bottom: 1px solid #334155;
             }
             QTableWidget::item:selected {
-                background-color: #3d5a80;
-                color: white;
+                background-color: #1e3a8a;
+                color: #ffffff;
             }
         """)
 
@@ -71,3 +72,4 @@ class MoveHistoryPanel(QWidget):
 
     def clear(self):
         self.table.setRowCount(0)
+

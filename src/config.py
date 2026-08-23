@@ -20,15 +20,15 @@ STOCKFISH_DEFAULT_ELO = 1500
 STOCKFISH_MIN_ELO = 1320
 STOCKFISH_MAX_ELO = 3190
 
-# 棋盘与界面视觉配色 (Lichess 经典 Wood & Clean 风格)
+# 棋盘与界面视觉配色 (现代极简深色 Wood & Slate 风格)
 BOARD_THEME = {
-    "light_square": "#F0D9B5",          # 浅色木纹格
-    "dark_square": "#B58863",           # 深色木纹格
-    "highlight_selected": "#829769",    # 选中格原色高亮
-    "highlight_last_move": "#CDD26A",   # 上步走法明亮高亮
-    "highlight_check": "#E05353",       # 将军红色警示
-    "move_indicator": "#5B7444",        # 合法走法圆点 (半透明由 Alpha 控制)
-    "capture_indicator": "#5B7444",     # 合法吃子圆环
+    "light_square": "#EADECA",          # 浅色柔和米白木纹
+    "dark_square": "#B38B6D",           # 沉稳深色胡桃木纹
+    "highlight_selected": "#7FA650",    # 选中格清爽浅绿高亮
+    "highlight_last_move": "#C5D14E",   # 上步走法明快黄绿高亮
+    "highlight_check": "#EF4444",       # 将军警示红
+    "move_indicator": "#4B6B38",        # 合法走法圆点
+    "capture_indicator": "#4B6B38",     # 合法吃子圆环
 }
 
 # 棋盘网格尺寸 (默认 80px，支持高分屏高清矢量直绘)

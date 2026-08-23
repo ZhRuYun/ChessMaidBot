@@ -30,8 +30,9 @@
  │ 模块 1: GUI 交互界面 (src/gui/)                                                         │
  │  ├── MoveHistoryPanel (左侧: 双栏记谱纯渲染表格)                                        │
  │  ├── ChessBoardWidget (中央: 纯绘制与事件捕获)                                         │
- │  ├── ChatPanel (右侧: LLM 对话展示与 5 级教学开关)                                     │
- │  ├── ControlBar (顶部: 模式选择 / Elo 调节 / 认输 / 求和 / 导出 PGN&FEN)                 │
+ │  ├── ChatPanel (右侧: LLM 对话展示, 主动询问LLM, 5 级教学开关与 LoadingSpinner 转圈)   │
+ │  ├── ControlBar (顶部: 模式选择 / Elo 调节 / 认输 / 求和 / 导出棋局状态(PGN+FEN))       │
+ │  ├── LoadingSpinner (现代极简平滑旋转指示器)                                            │
  │  └── PromotionDialog (升变选择框)                                                      │
  └─────────────────▲───────────────────────────────────────┬──────────────────────────────┘
                    │ (信号监听与渲染刷新)                      │ 仅发用户意图 (move_ready / resign / draw)
@@ -50,14 +51,15 @@
  │ └── MoveHistory-     │   │     (UCI_Elo / 多PV评估)  │   │     (PGN+LLM复合结构/多库)  │
  │     Manager          │   └───────────┬───────────────┘   └─────────────────────────────┘
  └──────────────────────┘               │ (提供引擎分析数据与工具集)
-                                ┌───────▼───────────────┐
-                                │ 模块 5: Agent 接口     │
-                                │ src/agents/           │
-                                │ ├── ChessAgent (抽象)  │
-                                │ ├── AgentTools (方法库)│
-                                │ ├── AgentRequest (包) │
-                                │ └── EchoAgent/LLMAgent│
-                                └───────────────────────┘
+                                 ┌───────▼───────────────┐
+                                 │ 模块 5: Agent 接口     │
+                                 │ src/agents/           │
+                                 │ ├── ChessAgent (抽象)  │
+                                 │ ├── AgentTools (方法库)│
+                                 │ ├── AgentRequest (包) │
+                                 │ ├── PromptBuilder     │
+                                 │ └── EchoAgent/LLMAgent│
+                                 └───────────────────────┘
 ```
 
 ---
@@ -109,9 +111,10 @@
 * **主要文件**：
   * `chess_board.py` (`ChessBoardWidget`): 居中展示。基于 PySide6 + QSvgRenderer 矢量直绘，支持抗锯齿、拖拽和点击落子、Lichess 风格王车易位、将军红色高亮。捕获合法落子后发送 `move_ready(chess.Move)` 信号。
   * `move_history_panel.py` (`MoveHistoryPanel`): 布局在左侧。纯双栏记谱表格，通过 `set_records(records)` 方法整表重建渲染。
-  * `chat_panel.py` (`ChatPanel`): 布局在右侧。包含女仆状态标头、5 级教学触发器复选框、Markdown 气泡流展示、快捷提问条及统一输入框。
-  * `control_bar.py` (`ControlBar`): 顶部控制条。包含模式下拉列表、Stockfish 目标 Elo 微调框（1320~3190）、新对局、悔棋、翻转棋盘、🤝 求和、🏳️ 认输、导出 PGN/FEN 按钮。
-  * `main_window.py` (`MainWindow`): 装配中心，负责将 Controller 的广播信号与各 GUI 面板的槽函数连接。
+   * `chat_panel.py` (`ChatPanel`): 布局在右侧。包含女仆状态标头、LoadingSpinner 转圈动效、5 级教学触发器复选框、Markdown 气泡流展示、“✨ 主动询问女仆指导” 按钮及统一输入框。
+   * `control_bar.py` (`ControlBar`): 顶部控制条。包含模式下拉列表、Stockfish 目标 Elo 微调框（1320~3190）、新对局、悔棋、翻转棋盘、🤝 求和、🏳️ 认输、📋 导出棋局状态 (PGN+FEN 一键复制到剪贴板) 按钮。
+   * `loading_spinner.py` (`LoadingSpinner`): 现代极简圆形旋转平滑加载控件。
+   * `main_window.py` (`MainWindow`): 装配中心，负责将 Controller 的广播信号与各 GUI 面板的槽函数连接，并管理 `LLMWorker` 后台异步响应。
 
 ### 模块 2: Controller 调度中枢层 (`src/controller/`)
 * **设计原则**：**棋局状态的唯一写路径**。所有落子、悔棋、认输、求和、人机异步触发必须经由该层执行。
@@ -158,6 +161,8 @@
     * `AgentTools`: 提供给 LLM 的方法库契约（数据库读取、Stockfish 状态读取等 4 类能力）。
     * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history` + `tools`）。
     * `ChessAgent`: 抽象基类，定义 `reply(self, request: AgentRequest) -> str`。
+  * `prompt_builder.py` (`PromptBuilder`):
+    * 依据棋盘现状（PGN、FEN、行动方、最近走法）及 4 个教学细分开关生成定制化 Prompt，支持每步自动教学与主动询问定制。
   * `echo_agent.py` (`EchoAgent`): 本地回声代理，用于无 LLM API 时的开发测试与链路占位。
 
 ### 模块 6: 数据库与棋局持久化 (`src/database/`)
@@ -166,6 +171,7 @@
   * `history_store.py` (`HistoryStore`):
     * 存储根目录 `data/games/`。
     * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档，并在文件末尾追加 `% --- LLM GAME SUMMARY ---` 总结区。
+    * 内置 `is_useful_game(pgn_text)` 与 `list_games(filter_useless=True)` 过滤机制，自动排除未开局即认输/求和的无用棋局。
     * 提供 `parse_game_file(content)` 分离 PGN 与总结文本。
     * 提供统一的 `query_database(category, **kwargs)` 接口，支持历史棋局、开局库、战术库、残局库等分类检索。
 

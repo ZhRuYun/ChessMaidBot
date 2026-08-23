@@ -32,9 +32,9 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 | 模块 | 功能设计点 | 状态 | 说明 |
 |---|---|---|---|
 | **1. GUI 交互界面** | 交互式棋盘（矢量绘图、拖拽、点击、Lichess 风格王车易位、升变弹窗） | ✅ 已完成 | 高清抗锯齿，完全响应调度层信号 |
-| | LLM 对话窗口（Markdown 气泡流、快捷提问条、输入框） | ✅ 已完成 | 支持对话流与 5 级教学触发器动态勾选联动 |
-| | 现代三栏布局（左: 记谱表, 中: 棋盘, 右: 对话窗口） | ✅ 已完成 | 居中沉浸式对弈视界 |
-| | 认输（🏳️ 认输）与 求和（🤝 求和）按钮交互 | ✅ 已完成 | 支持二次确认与协议/规则判定 |
+| | LLM 对话窗口（Markdown 气泡流、主动询问LLM、LoadingSpinner 转圈、输入框） | ✅ 已完成 | 异步生成响应，每步走棋定制教学与手动主动询问 |
+| | 现代极简三栏布局（左: 记谱表, 中: 棋盘, 右: 对话窗口） | ✅ 已完成 | 深色黑曜石现代质感视界 |
+| | 认输（🏳️ 认输）、求和（🤝 求和）与 一键导出棋局状态（📋 PGN+FEN） | ✅ 已完成 | 状态复制到剪贴板，支持二次确认与规则判定 |
 | | 推荐走法列表（非核心） | ⏳ 尚未完成（非核心） | 涉及 LLM 建议与 Stockfish 引擎推荐冲突切换，预留扩展插槽 |
 | **2. Controller 调度层** | 对弈模式管理器（本地双人、人机对弈） | ✅ 已完成 | 模式状态机与对局元数据无缝衔接 |
 | | 人机对弈后台异步走子（`EngineWorker` 线程） | ✅ 已完成 | 计算时不卡顿 UI，算完自动投递走法并锁定/解锁棋盘 |
@@ -137,10 +137,10 @@ ChessMaidBot/
 │   ├── core/                   # [模块3] 规则核心与记谱 (BoardState, MoveHistoryManager)
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
 │   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
-│   ├── agents/                 # [模块5] Agent 抽象与标准请求格式 (ChessAgent, AgentRequest, AgentTools)
-│   ├── database/               # [模块6] 历史棋局库持久化存储 (HistoryStore, PGN+总结解析)
-│   └── gui/                    # [模块1] PySide6 视图组件 (中央棋盘、左侧记谱表、右侧聊天框等)
-└── tests/                      # 单元测试与集成测试 (50+ 测试用例，100% 通过)
+│   ├── agents/                 # [模块5] Agent 抽象、标准请求格式与 PromptBuilder (ChessAgent, PromptBuilder)
+│   ├── database/               # [模块6] 历史棋局库持久化与智能筛选 (HistoryStore, PGN+总结解析)
+│   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LoadingSpinner等)
+└── tests/                      # 单元测试与集成测试 (56+ 测试用例，100% 通过)
 ```
 
 ---
