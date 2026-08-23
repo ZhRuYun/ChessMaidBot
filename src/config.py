@@ -8,17 +8,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = BASE_DIR / "assets"
 PIECES_DIR = ASSETS_DIR / "pieces"
 
-# 运行期数据目录 (历史棋局库、开局库、战术库、残局库等, 已被 .gitignore 忽略)
+# 运行期数据与数据库统一大目录 (包含历史棋局库、开局库、战术库、残局库等, 已被 .gitignore 忽略)
 DATA_DIR = BASE_DIR / "data"
 GAMES_DIR = DATA_DIR / "games"
 BOOKS_DIR = DATA_DIR / "books"
 TACTICS_DIR = DATA_DIR / "tactics"
 SYZYGY_DIR = DATA_DIR / "syzygy"
 
-# 数据库默认路径 (支持本地 Polyglot .bin、EPD .epd 和 Syzygy .rtbw/.rtbz)
+# 数据库默认文件/目录路径 (支持本地 Polyglot .bin、EPD .epd 和 Syzygy .rtbw/.rtbz)
 OPENING_BOOK_PATH = BOOKS_DIR / "titans.bin"
 DEFAULT_TACTICS_PATH = TACTICS_DIR / "tactics.epd"
 DEFAULT_SYZYGY_PATH = SYZYGY_DIR
+
+# 自动确保数据大目录及各子库目录结构存在
+def ensure_data_directories():
+    for d in (DATA_DIR, GAMES_DIR, BOOKS_DIR, TACTICS_DIR, SYZYGY_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+ensure_data_directories()
 
 # Stockfish 引擎 (模块4): 将可执行文件放入 engines/ 目录即可被识别
 ENGINE_DIR = BASE_DIR / "engines"

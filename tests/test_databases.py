@@ -11,6 +11,7 @@ from src.database.opening_book import OpeningBook, OpeningMoveEntry
 from src.database.tactics_db import TacticsDatabase, TacticPuzzle
 from src.database.endgame_db import EndgameDatabase, EndgameEvaluation
 from src.database.history_store import HistoryStore
+from src.database.unified_db import UnifiedDatabase
 
 
 class TestOpeningBook(unittest.TestCase):
@@ -140,6 +141,36 @@ class TestDatabaseIntegrationInHistoryStore(unittest.TestCase):
         res = self.history_store.query_database("endgame", fen=fen)
         self.assertEqual(res["category"], "endgame")
         self.assertEqual(res["wdl"], 2)
+
+
+class TestUnifiedDatabase(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.unified_db = UnifiedDatabase(base_data_dir=Path(self.temp_dir))
+
+    def tearDown(self):
+        self.unified_db.close()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_directory_structure_created(self):
+        base = Path(self.temp_dir)
+        self.assertTrue((base / "games").exists())
+        self.assertTrue((base / "books").exists())
+        self.assertTrue((base / "tactics").exists())
+        self.assertTrue((base / "syzygy").exists())
+
+    def test_unified_query_dispatch(self):
+        res_op = self.unified_db.query("opening", fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+        self.assertEqual(res_op["category"], "opening")
+        self.assertTrue(res_op["in_book"])
+
+        res_tac = self.unified_db.query("tactics", fen="6k1/5ppp/8/8/8/8/1Q4PP/6K1 w - - 0 1")
+        self.assertEqual(res_tac["category"], "tactics")
+        self.assertEqual(res_tac["status"], "matched")
+
+        res_end = self.unified_db.query("endgame", fen="8/8/8/8/8/5K2/8/4k1Q1 w - - 0 1")
+        self.assertEqual(res_end["category"], "endgame")
+        self.assertEqual(res_end["wdl"], 2)
 
 
 if __name__ == "__main__":

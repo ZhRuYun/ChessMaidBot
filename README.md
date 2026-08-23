@@ -10,9 +10,10 @@
 - [三、软件架构概览（六大模块）](#三软件架构概览六大模块)
 - [四、环境配置与快速启动](#四环境配置与快速启动)
 - [五、项目目录结构](#五项目目录结构)
-- [六、核心模块开发与接入指引](#六核心模块开发与接入指引)
-- [七、测试与质量保证](#七测试与质量保证)
-- [八、团队与 AI 协作规范](#八团队与-ai-协作规范)
+- [六、自定义配置教程指引](#六自定义配置教程指引)
+- [七、核心模块开发与接入指引](#七核心模块开发与接入指引)
+- [八、测试与质量保证](#八测试与质量保证)
+- [九、团队与 AI 协作规范](#九团队与-ai-协作规范)
 
 ---
 
@@ -129,23 +130,33 @@ ChessMaidBot/
 ├── README.md                   # 项目总说明文档
 ├── ARCHITECTURE.md             # 架构全景与接口详细设计文档
 ├── AGENTS.md                   # AI 协作与二次开发规范
+├── docs/                       # 项目详细开发与配置教程文档
+│   └── CUSTOM_CONFIG_GUIDE.md  # 可自定义配置功能完全教程
 ├── assets/                     # 静态资源（矢量棋子 SVG 图标等）
 ├── engines/                    # 引擎存放目录（放入 stockfish 二进制）
-├── data/                       # 运行期产生的数据（历史棋局自动存入 data/games/）
+├── data/                       # 统一数据大目录（历史棋局 games/、开局库 books/、战术库 tactics/、残局库 syzygy/）
 ├── src/                        # 核心源代码
 │   ├── config.py               # 全局配置、主题、Prompt、Elo 范围与路径定义
 │   ├── core/                   # [模块3] 规则核心与记谱 (BoardState, MoveHistoryManager)
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
 │   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
 │   ├── agents/                 # [模块5] Agent 抽象、标准请求格式与 PromptBuilder (ChessAgent, PromptBuilder)
-│   ├── database/               # [模块6] 历史棋局库持久化、开局库(Polyglot)、战术库(EPD)与残局库(Syzygy/启发式)
+│   ├── database/               # [模块6] 统一数据库管理(UnifiedDatabase)、历史棋局库持久化、开局库(Polyglot)、战术库(EPD)与残局库(Syzygy/启发式)
 │   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LoadingSpinner等)
 └── tests/                      # 单元测试与集成测试 (70+ 测试用例，100% 通过)
 ```
 
 ---
 
-## 五、核心模块开发与接入指引
+## 六、自定义配置教程指引
+
+ChessMaidBot 提供了高度可扩展的自定义配置能力（包括数据库题库、Stockfish 引擎 Elo、女仆人设 Prompt、界面与棋盘视觉配色以及在线 LLM API 接入）。
+
+👉 **完整配置指南请查阅**：[`docs/CUSTOM_CONFIG_GUIDE.md`](./docs/CUSTOM_CONFIG_GUIDE.md)
+
+---
+
+## 七、核心模块开发与接入指引
 
 ### 1. 接入真实 LLM（模块5）
 继承 `src.agents.base.ChessAgent`，实现 `reply(self, request: AgentRequest) -> str`：
@@ -173,7 +184,7 @@ with StockfishClient() as engine:
 
 ---
 
-## 六、测试与质量保证
+## 八、测试与质量保证
 
 项目采用标准 `unittest` 构建了全面的测试矩阵（覆盖规则、记谱、控制器、数据库、引擎客户端及离屏 GUI 链路）：
 
@@ -184,7 +195,7 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests
 
 ---
 
-## 七、团队与 AI 协作规范
+## 九、团队与 AI 协作规范
 
 1. **人类开发者**：在添加新功能前，请通读 [`ARCHITECTURE.md`](./ARCHITECTURE.md)，保持分层清晰。
 2. **AI 模型（LLM/Coding Agent）**：
