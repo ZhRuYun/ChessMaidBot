@@ -388,7 +388,10 @@ class GameController(QObject):
 
     def _agent_read_database(self, category: str = "history", params: Optional[Dict[str, Any]] = None) -> Any:
         """为 LLM 提供的数据库读取方法 (模块5方法 1 & 2)"""
-        params = params or {}
+        params = dict(params or {})
+        # 默认填入当前局面 FEN 方便开局/残局直接查询
+        if "fen" not in params and category in ("opening", "tactics", "endgame"):
+            params["fen"] = self.board_state.get_fen()
         return self.history_store.query_database(category=category, **params)
 
     def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None) -> Any:

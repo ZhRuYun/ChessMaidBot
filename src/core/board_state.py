@@ -223,7 +223,14 @@ class BoardState:
     def import_pgn(self, pgn_str: str) -> bool:
         """从 PGN 文本加载对局 (含头信息); 含错误/空棋谱时拒绝并保持原局面"""
         try:
-            game = chess.pgn.read_game(io.StringIO(pgn_str))
+            import io, logging
+            logger = logging.getLogger("chess.pgn")
+            prev_level = logger.level
+            logger.setLevel(logging.CRITICAL)
+            try:
+                game = chess.pgn.read_game(io.StringIO(pgn_str))
+            finally:
+                logger.setLevel(prev_level)
         except Exception:
             return False
         if game is None or game.errors:

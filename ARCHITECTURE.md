@@ -93,14 +93,16 @@
 6. **模块 6: 数据库与棋局持久化**
    - 终局以“标准 PGN + LLM 对局总结”复合结构持久化至 `data/games/`。
    - 复合棋谱文件解析方法 `parse_game_file`。
-   - 统一数据库查询接口 `query_database`。
+   - `OpeningBook`：支持 Polyglot (.bin) 二进制开局库与内置开源开局库 (ECO/走法检索)。
+   - `TacticsDatabase`：支持 EPD (.epd) 战术题库标准解析与典型战术模式检索。
+   - `EndgameDatabase`：支持 Syzygy (.rtbw/.rtbz) 残局库精准探测与纯规则启发式残局理论评估器。
+   - 统一数据库查询接口 `query_database`（提供 history / opening / tactics / endgame 统一分发）。
 
 ### ⏳ 尚未完成的设计功能（按规划后续迭代）
 1. **推荐走法列表（非核心）**：涉及 LLM 推荐与 Stockfish 引擎推荐冲突时的自由切换按钮（目前已在底层提供 `analyse` 与 `AgentTools` 数据基础）。
 2. **网络双人对弈（非核心）**：网络通信与房间匹配协议。
 3. **树形变例生成（非核心）**：平行分支棋局管理（数据层已预留 `fen_after` 快照）。
 4. **真实在线 LLM 生产接入**：接入 DeepSeek / OpenAI API key 进行生产级对话（目前已完备基类、请求体与测试用 EchoAgent 占位）。
-5. **外部开局库/战术库/残局库文件填充**：Polyglot/EPD/Syzygy 文件加载。
 
 ---
 
@@ -166,14 +168,20 @@
   * `echo_agent.py` (`EchoAgent`): 本地回声代理，用于无 LLM API 时的开发测试与链路占位。
 
 ### 模块 6: 数据库与棋局持久化 (`src/database/`)
-* **设计原则**：面向 LLM 纯文本设计的“标准 PGN + LLM 对局总结”复合结构持久化。
+* **设计原则**：面向 LLM 纯文本设计的“标准 PGN + LLM 对局总结”复合结构持久化，以及开局/战术/残局多库解耦与统一分发。
 * **主要文件**：
   * `history_store.py` (`HistoryStore`):
     * 存储根目录 `data/games/`。
     * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档，并在文件末尾追加 `% --- LLM GAME SUMMARY ---` 总结区。
     * 内置 `is_useful_game(pgn_text)` 与 `list_games(filter_useless=True)` 过滤机制，自动排除未开局即认输/求和的无用棋局。
     * 提供 `parse_game_file(content)` 分离 PGN 与总结文本。
-    * 提供统一的 `query_database(category, **kwargs)` 接口，支持历史棋局、开局库、战术库、残局库等分类检索。
+    * 统筹 `OpeningBook`、`TacticsDatabase`、`EndgameDatabase`，提供统一的 `query_database(category, **kwargs)` 接口。
+  * `opening_book.py` (`OpeningBook`):
+    * 支持 Polyglot 格式 (.bin) 本地开局库检索与内置开源 ECO 常用开局变例库。
+  * `tactics_db.py` (`TacticsDatabase`):
+    * 支持标准 EPD 格式解析与底线杀、双重打击、牵制等战术题库检索与 FEN 匹配。
+  * `endgame_db.py` (`EndgameDatabase`):
+    * 支持 Syzygy Tablebases (.rtbw/.rtbz) 精准 WDL/DTZ 探测与无库时的启发式经典残局理论评估器（单后杀单王、单车杀单王、王兵残局等）。
 
 ---
 

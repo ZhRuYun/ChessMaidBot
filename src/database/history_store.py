@@ -9,12 +9,26 @@ from typing import List, Optional, Dict, Any
 from ..config import GAMES_DIR
 
 
-class HistoryStore:
-    """历史棋局库与数据库统一管理器"""
+from .opening_book import OpeningBook
+from .tactics_db import TacticsDatabase
+from .endgame_db import EndgameDatabase
 
-    def __init__(self, root: Optional[Path] = None):
+
+class HistoryStore:
+    """历史棋局库与数据库统一管理器 (统筹历史对局、开局库、EPD战术库与残局库)"""
+
+    def __init__(
+        self,
+        root: Optional[Path] = None,
+        opening_book: Optional[OpeningBook] = None,
+        tactics_db: Optional[TacticsDatabase] = None,
+        endgame_db: Optional[EndgameDatabase] = None,
+    ):
         self.root = Path(root) if root else GAMES_DIR
         self.root.mkdir(parents=True, exist_ok=True)
+        self.opening_book = opening_book or OpeningBook()
+        self.tactics_db = tactics_db or TacticsDatabase()
+        self.endgame_db = endgame_db or EndgameDatabase()
 
     def save_game(
         self,
@@ -117,11 +131,48 @@ class HistoryStore:
                     "llm_summary": parsed["summary"],
                 })
             return {"category": "history", "count": len(games), "games": game_summaries}
-        elif category in ("opening", "tactics", "endgame"):
+        elif category == "opening":
+            fen = kwargs.get("fen", "")
+            limit = kwargs.get("limit", 5)
+            if fen:
+                res = self.opening_book.query_opening(fen, limit=limit)
+                return {"category": "opening", "status": "ready", **res}
             return {
-                "category": category,
+                "category": "opening",
                 "status": "ready",
-                "message": f"Database section '{category}' is accessible in LLM-readable format.",
+                "has_polyglot_book": self.opening_book.has_polyglot_book(),
+                "message": "Opening book is ready. Provide 'fen' in params to query lines and ECO names.",
+            }
+        elif category == "tactics":
+            theme = kwargs.get("theme")
+            limit = kwargs.get("limit", 5)
+            fen = kwargs.get("fen")
+            if fen:
+                puzzle = self.tactics_db.find_tactics_for_position(fen)
+                if puzzle:
+                    return {
+                        "category": "tactics",
+                        "status": "matched",
+                        "puzzle": {
+                            "id": puzzle.id,
+                            "fen": puzzle.fen,
+                            "best_moves": puzzle.bm,
+                            "theme": puzzle.theme,
+                            "description": puzzle.description,
+                        }
+                    }
+                return {"category": "tactics", "status": "no_match_for_fen", "fen": fen}
+            return self.tactics_db.query_tactics(theme=theme, limit=limit)
+        elif category == "endgame":
+            fen = kwargs.get("fen", "")
+            if fen:
+                res = self.endgame_db.query_endgame(fen)
+                return {"category": "endgame", "status": "ready", **res}
+            return {
+                "category": "endgame",
+                "status": "ready",
+                "has_syzygy_database": self.endgame_db.has_syzygy(),
+                "message": "Endgame database/evaluator is ready. Provide 'fen' to get theoretical WDL and advice.",
             }
         else:
             return {"category": category, "error": f"Unknown database category: {category}"}

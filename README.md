@@ -51,7 +51,7 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 | | LLM 外部方法库（`AgentTools` 4 大方法） | ✅ 已完成 | 允许自主决定是否读取及读取数据库/引擎状态哪部分 |
 | | 真实在线 LLM API 接入（如 DeepSeek/OpenAI） | ⏳ 尚未完成（测试期使用 EchoAgent 占位） | 提供标准基类与注入模板，可直接接入 API key |
 | **6. 数据库** | 历史棋局库持久化（PGN + LLM 总结复合格式） | ✅ 已完成 | 写入 `data/games/`，支持双向拆解与查询检索 |
-| | 开局库、EPD 编码战术库、残局库接入 | ⏳ 尚未完成（已预留统一查询接口） | `query_database` 接口已抽象完备，等待数据文件填充 |
+| | 开局库、EPD 编码战术库、残局库接入 | ✅ 已完成 | 支持 Polyglot (.bin) / EPD (.epd) / Syzygy (.rtbw/.rtbz) 及内置开源精选库与启发式降级 |
 
 ---
 
@@ -138,9 +138,9 @@ ChessMaidBot/
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
 │   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
 │   ├── agents/                 # [模块5] Agent 抽象、标准请求格式与 PromptBuilder (ChessAgent, PromptBuilder)
-│   ├── database/               # [模块6] 历史棋局库持久化与智能筛选 (HistoryStore, PGN+总结解析)
+│   ├── database/               # [模块6] 历史棋局库持久化、开局库(Polyglot)、战术库(EPD)与残局库(Syzygy/启发式)
 │   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LoadingSpinner等)
-└── tests/                      # 单元测试与集成测试 (56+ 测试用例，100% 通过)
+└── tests/                      # 单元测试与集成测试 (70+ 测试用例，100% 通过)
 ```
 
 ---
