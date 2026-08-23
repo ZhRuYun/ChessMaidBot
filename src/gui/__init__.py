@@ -4,6 +4,8 @@ from .chat_panel import ChatPanel
 from .control_bar import ControlBar
 from .move_history_panel import MoveHistoryPanel
 from .promotion_dialog import PromotionDialog
+from .llm_config_dialog import LLMConfigDialog
+from .persona_config_dialog import PersonaConfigDialog
 
 __all__ = [
     "MainWindow",
@@ -11,5 +13,7 @@ __all__ = [
     "ChatPanel",
     "ControlBar",
     "MoveHistoryPanel",
-    "PromotionDialog"
+    "PromotionDialog",
+    "LLMConfigDialog",
+    "PersonaConfigDialog",
 ]

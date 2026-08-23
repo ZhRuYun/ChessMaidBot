@@ -12,7 +12,7 @@ from PySide6.QtCore import QThread, Signal
 import chess
 
 from ..agents.base import ChessAgent, AgentRequest
-from ..agents.echo_agent import EchoAgent
+from ..agents.llm_agent import LLMAgent
 from ..agents.prompt_builder import PromptBuilder
 from ..config import DEFAULT_MAID_PERSONA
 from ..controller.game_controller import GameController
@@ -70,7 +70,10 @@ class MainWindow(QMainWindow):
         """)
 
         self.controller = controller or GameController()
-        self.agent = agent or EchoAgent(persona_prompt=DEFAULT_MAID_PERSONA)
+        # 当前生效的人设 Prompt (可被用户通过「🎭 人设」按钮运行时修改)
+        self.current_persona = DEFAULT_MAID_PERSONA
+        # 默认使用 LLMAgent (无 API Key 时自动降级为本地描述性回复, 行为同 EchoAgent)
+        self.agent = agent or LLMAgent(persona_prompt=self.current_persona)
         self._llm_thread: Optional[LLMWorker] = None
 
         # 注册 LLM 终局总结回调
@@ -78,6 +81,8 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
         self.connect_controller()
+        # 初始化 chat_panel 连接状态徽章 (反映 LLMAgent 当前是否配置了 Key)
+        self._sync_llm_connection_status()
         self.controller.new_game()
 
     def init_ui(self):
@@ -95,6 +100,8 @@ class MainWindow(QMainWindow):
         self.control_bar.resign_requested.connect(self.on_resign)
         self.control_bar.draw_requested.connect(self.on_draw)
         self.control_bar.export_state_requested.connect(self.on_export_game_state)
+        self.control_bar.llm_config_requested.connect(self.on_open_llm_config)
+        self.control_bar.persona_config_requested.connect(self.on_open_persona_config)
         self.control_bar.mode_changed.connect(self.controller.set_mode_label)
         self.control_bar.elo_changed.connect(self.controller.set_engine_elo)
         main_layout.addWidget(self.control_bar)
@@ -154,7 +161,7 @@ class MainWindow(QMainWindow):
         )
         req = self.controller.build_agent_request(
             user_message=custom_prompt,
-            persona_prompt=DEFAULT_MAID_PERSONA,
+            persona_prompt=self.current_persona,
         )
         return self.agent.reply(req)
 
@@ -264,6 +271,90 @@ class MainWindow(QMainWindow):
             "已一键将【PGN + FEN】完整棋局状态复制到系统剪切板！\n可直接粘贴使用。"
         )
 
+    # ---------- AI 女仆连接配置 ----------
+
+    def on_open_llm_config(self):
+        """打开 LLM 配置对话框, 应用后重建 LLMAgent 并更新状态徽章"""
+        # 收集当前 agent 配置用于预填表单
+        current_config = self._collect_current_llm_config()
+        from .llm_config_dialog import LLMConfigDialog
+        new_config = LLMConfigDialog.get_config_dialog(
+            current_config=current_config, parent=self
+        )
+        if new_config is None:
+            return  # 用户取消
+
+        # 重建 LLMAgent (保留当前人设, 应用新配置)
+        self.agent = LLMAgent(
+            api_base=new_config.get("api_base") or None,
+            api_key=new_config.get("api_key") or None,
+            model=new_config.get("model") or None,
+            persona_prompt=self.current_persona,
+        )
+        self._sync_llm_connection_status()
+
+        # 友好的反馈提示
+        if self.agent.api_key:
+            QMessageBox.information(
+                self, "AI 女仆已连接",
+                f"已成功配置 AI 女仆连接！\n\n模型: {self.agent.model}\n基地址: {self.agent.api_base}\n\n"
+                f"现在 ChessMaid 将使用真实大语言模型进行棋艺教学。"
+            )
+        else:
+            QMessageBox.information(
+                self, "已切换为本地降级模式",
+                "未填写 API Key, ChessMaid 将使用本地降级回复。\n\n"
+                "如需接入真实 AI, 请点击「⚙️ AI 设置」填入 API Key。"
+            )
+
+    def _collect_current_llm_config(self) -> dict:
+        """从当前 agent 收集配置, 用于预填配置对话框"""
+        if isinstance(self.agent, LLMAgent):
+            return {
+                "api_base": self.agent.api_base,
+                "api_key": self.agent.api_key,
+                "model": self.agent.model,
+            }
+        return {}
+
+    def _sync_llm_connection_status(self):
+        """根据当前 agent 的 Key 配置, 同步 chat_panel 状态徽章"""
+        if isinstance(self.agent, LLMAgent):
+            connected = bool(self.agent.api_key)
+            self.chat_panel.set_llm_connected(connected, self.agent.model)
+        else:
+            # 非 LLMAgent (如测试用 EchoAgent) 默认显示在线
+            self.chat_panel.set_llm_connected(True, "")
+
+    # ---------- 人设 Prompt 自定义 ----------
+
+    def on_open_persona_config(self):
+        """打开人设 Prompt 自定义对话框, 应用后更新 current_persona 与 agent"""
+        from .persona_config_dialog import PersonaConfigDialog
+        new_persona = PersonaConfigDialog.get_persona_dialog(
+            current_persona=self.current_persona, parent=self
+        )
+        if new_persona is None:
+            return  # 用户取消
+
+        # 更新当前人设状态 (后续所有 build_agent_request 调用都会使用它)
+        self.current_persona = new_persona
+
+        # 同步更新 agent 实例的人设
+        if isinstance(self.agent, LLMAgent):
+            self.agent.set_persona(new_persona)
+        elif hasattr(self.agent, "persona_prompt"):
+            # 兼容其他类型的 Agent (如带 persona_prompt 属性的 EchoAgent)
+            self.agent.persona_prompt = new_persona
+
+        # 友好的反馈提示
+        QMessageBox.information(
+            self, "人设已更新",
+            "AI 女仆的人设 Prompt 已成功更新！\n\n"
+            "后续对话与教学将使用新人设。新对局也会沿用此人设。\n\n"
+            f"当前人设 (前 30 字): {new_persona[:30]}..."
+        )
+
     # ---------- LLM 对话链路 ----------
 
     def on_ask_llm_requested(self):
@@ -291,7 +382,7 @@ class MainWindow(QMainWindow):
             self._llm_thread.wait(300)
 
         self.chat_panel.set_loading(True)
-        request = self.controller.build_agent_request(message, persona_prompt=DEFAULT_MAID_PERSONA)
+        request = self.controller.build_agent_request(message, persona_prompt=self.current_persona)
 
         self._llm_thread = LLMWorker(self.agent, request, parent=self)
         self._llm_thread.response_ready.connect(self._on_llm_response)
@@ -305,5 +396,3 @@ class MainWindow(QMainWindow):
     def _on_llm_failed(self, error_msg: str):
         self.chat_panel.set_loading(False)
         self.chat_panel.append_maid_message(f"*(女仆回复出现异常: {error_msg})*")
-
-

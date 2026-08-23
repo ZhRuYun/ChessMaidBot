@@ -20,6 +20,8 @@ class ControlBar(QWidget):
     mode_changed = Signal(str)
     elo_changed = Signal(int)
     export_state_requested = Signal()
+    llm_config_requested = Signal()   # 打开 AI 女仆连接配置对话框
+    persona_config_requested = Signal()  # 打开人设 Prompt 自定义对话框
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,6 +101,12 @@ class ControlBar(QWidget):
         # 导出棋局状态按钮 (一键导出 PGN + FEN 到剪切板)
         self.btn_export_state = QPushButton("📋 导出棋局状态 (PGN+FEN)")
 
+        # AI 女仆连接配置按钮 (让用户在界面填入 API Key)
+        self.btn_llm_config = QPushButton("⚙️ AI 设置")
+
+        # 人设 Prompt 自定义按钮 (让用户自定义 AI 女仆的人设)
+        self.btn_persona_config = QPushButton("🎭 人设")
+
         standard_buttons = [
             self.btn_new_game, self.btn_undo, self.btn_flip, self.btn_draw
         ]
@@ -164,12 +172,56 @@ class ControlBar(QWidget):
             }
         """)
 
+        # AI 设置按钮样式 (紫色强调, 区别于其他功能)
+        self.btn_llm_config.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #a78bfa;
+                border: 1px solid #6d28d9;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #6d28d9;
+                color: #ffffff;
+                border-color: #a78bfa;
+            }
+            QPushButton:pressed {
+                background-color: #5b21b6;
+            }
+        """)
+
+        # 人设按钮样式 (粉紫强调, 表达人格/性格意味)
+        self.btn_persona_config.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #f472b6;
+                border: 1px solid #be185d;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #be185d;
+                color: #ffffff;
+                border-color: #f472b6;
+            }
+            QPushButton:pressed {
+                background-color: #9d174d;
+            }
+        """)
+
         self.btn_new_game.clicked.connect(self.new_game_requested.emit)
         self.btn_undo.clicked.connect(self.undo_requested.emit)
         self.btn_flip.clicked.connect(self.flip_requested.emit)
         self.btn_draw.clicked.connect(self.draw_requested.emit)
         self.btn_resign.clicked.connect(self.resign_requested.emit)
         self.btn_export_state.clicked.connect(self.export_state_requested.emit)
+        self.btn_llm_config.clicked.connect(self.llm_config_requested.emit)
+        self.btn_persona_config.clicked.connect(self.persona_config_requested.emit)
 
         layout.addWidget(mode_label)
         layout.addWidget(self.mode_combo)
@@ -182,6 +234,8 @@ class ControlBar(QWidget):
         layout.addWidget(self.btn_draw)
         layout.addWidget(self.btn_resign)
         layout.addStretch()
+        layout.addWidget(self.btn_persona_config)
+        layout.addWidget(self.btn_llm_config)
         layout.addWidget(self.btn_export_state)
 
         self._update_elo_visibility(self.mode_combo.currentText())
@@ -194,5 +248,3 @@ class ControlBar(QWidget):
         is_vs_engine = MODE_LABELS[GameMode.VS_ENGINE] == text
         self.elo_label.setVisible(is_vs_engine)
         self.elo_spin.setVisible(is_vs_engine)
-
-

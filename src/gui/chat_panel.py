@@ -3,7 +3,7 @@ LLM 女仆互动对话面板 (模块1 - GUI)
 - 现代化极简黑曜石设计
 - 教学开关直接读写调度层的 TeachingTriggers 配置对象
 - 包含 Loading Spinner 转圈动效展示
-- 提供“主动询问LLM”按钮及手动输入提问链路
+- 提供"主动询问LLM"按钮及手动输入提问链路
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser,
@@ -153,7 +153,7 @@ class ChatPanel(QWidget):
         """)
         layout.addWidget(self.chat_display)
 
-        # 4. “主动询问LLM” 快捷交互按钮条
+        # 4. "主动询问LLM" 快捷交互按钮条
         ask_bar_layout = QHBoxLayout()
         self.ask_llm_btn = QPushButton("✨ 主动询问女仆指导 (分析当前局势)", self)
         self.ask_llm_btn.setStyleSheet("""
@@ -233,6 +233,8 @@ class ChatPanel(QWidget):
         input_layout.addWidget(self.send_btn)
         layout.addLayout(input_layout)
 
+    # ---------- 对外状态方法 ----------
+
     def set_loading(self, loading: bool):
         """控制转圈动效与控件可点击状态"""
         if loading:
@@ -243,10 +245,34 @@ class ChatPanel(QWidget):
             self.send_btn.setEnabled(False)
         else:
             self.spinner.stop()
-            self.status_badge.setText("● 在线")
-            self.status_badge.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 600;")
+            self._restore_status_badge()
             self.ask_llm_btn.setEnabled(True)
             self.send_btn.setEnabled(True)
+
+    def set_llm_connected(self, connected: bool, model: str = ""):
+        """更新女仆连接状态徽章 (供 MainWindow 在配置变更后调用)
+
+        Args:
+            connected: True=已接入真实 LLM (绿色在线); False=本地降级 (橙色)
+            model: 已接入时显示的模型名称, 用于状态栏提示
+        """
+        self._llm_connected = connected
+        self._llm_model_hint = model if connected else ""
+        if connected:
+            self.status_badge.setText(f"● LLM 在线{f' · {model}' if model else ''}")
+            self.status_badge.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 600;")
+        else:
+            self.status_badge.setText("● 本地降级")
+            self.status_badge.setStyleSheet("color: #fbbf24; font-size: 12px; font-weight: 600;")
+
+    def _restore_status_badge(self):
+        """恢复状态徽章为当前连接状态 (loading 结束后调用)"""
+        if getattr(self, "_llm_connected", False):
+            self.set_llm_connected(True, getattr(self, "_llm_model_hint", ""))
+        else:
+            self.set_llm_connected(False)
+
+    # ---------- 教学触发器槽 ----------
 
     def _on_master_toggled(self, checked: bool):
         for chk, _attr in self._sub_checks:
@@ -258,6 +284,8 @@ class ChatPanel(QWidget):
         for chk, attr in self._sub_checks:
             setattr(self.triggers, attr, chk.isChecked())
         self.teaching_triggers_changed.emit(self.triggers)
+
+    # ---------- 消息流 ----------
 
     def send_message(self, text: str):
         """统一消息入口: 显示用户气泡并广播消息信号"""
@@ -283,54 +311,6 @@ class ChatPanel(QWidget):
         <div style='margin-bottom: 12px; text-align: left;'>
             <div style='display: inline-block; background-color: #111827; color: #e2e8f0; padding: 8px 12px; border-radius: 10px 10px 10px 2px; border-left: 3px solid #38bdf8; border-top: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b; max-width: 92%;'>
                 <span style='color: #38bdf8; font-weight: 700; font-size: 11px;'>♟️ ChessMaid:</span><br>{md_html}
-            </div>
-        </div>
-        """
-        self.chat_display.append(html)
-
-    def _send_message(self):
-        text = self.input_field.text()
-        if not text.strip():
-            return
-        self.input_field.clear()
-        self.send_message(text)
-
-
-    def _on_master_toggled(self, checked: bool):
-        for chk, _attr in self._sub_checks:
-            chk.setEnabled(checked)
-        self._update_triggers()
-
-    def _update_triggers(self):
-        self.triggers.master_enabled = self.chk_master.isChecked()
-        for chk, attr in self._sub_checks:
-            setattr(self.triggers, attr, chk.isChecked())
-        self.teaching_triggers_changed.emit(self.triggers)
-
-    def send_message(self, text: str):
-        """统一消息入口: 显示用户气泡并广播消息信号"""
-        text = text.strip()
-        if not text:
-            return
-        self.append_user_message(text)
-        self.message_sent.emit(text)
-
-    def append_user_message(self, text: str):
-        html = f"""
-        <div style='margin-bottom: 12px; text-align: right;'>
-            <div style='display: inline-block; background-color: #34495e; color: #ffffff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; max-width: 85%; text-align: left;'>
-                <b>您:</b><br>{text}
-            </div>
-        </div>
-        """
-        self.chat_display.append(html)
-
-    def append_maid_message(self, text: str):
-        md_html = markdown.markdown(text, extensions=['extra'])
-        html = f"""
-        <div style='margin-bottom: 12px; text-align: left;'>
-            <div style='display: inline-block; background-color: #242b35; color: #e1e7ec; padding: 8px 12px; border-radius: 12px 12px 12px 2px; border-left: 3px solid #64b5f6; max-width: 90%;'>
-                <span style='color: #64b5f6; font-weight: bold;'>♟️ ChessMaid:</span><br>{md_html}
             </div>
         </div>
         """

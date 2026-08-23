@@ -23,7 +23,12 @@ class HistoryStore:
         llm_summary: Optional[str] = None,
     ) -> Path:
         """保存一局棋局文件 (PGN + 可选 LLM 总结内容), 返回文件路径"""
-        safe_result = result.replace("/", "-").replace(" ", "")
+        # 清洗文件名非法字符 (Windows: \ / : * ? " < > |), 避免 OSError
+        illegal = '<>:"/\\|?* '
+        safe_result = result
+        for ch in illegal:
+            safe_result = safe_result.replace(ch, "-")
+        safe_result = safe_result.strip("-") or "ongoing"
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = self.root / f"{stamp}-{safe_result}.pgn"
         counter = 1
