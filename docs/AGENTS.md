@@ -45,7 +45,7 @@
    - 如果新增了功能或类，必须在 `tests/` 目录下添加对应的单元测试。
 2. **同步更新架构文档**：
    - 若新增了文件或模块，更新 `README.md` 的目录树。
-   - 若调整了接口定义或通信协议，更新 `ARCHITECTURE.md` 与 `README.md` 中的接口规范。
+   - 若调整了接口定义或通信协议，更新 `docs/ARCHITECTURE.md` 与 `README.md` 中的接口规范。
 3. **提交规范**：
    - 提交信息（Commit Message）需清晰简练，按模块标明修改内容（如 `feat(engine): 支持 UCI_Elo 目标分控制`）。
 

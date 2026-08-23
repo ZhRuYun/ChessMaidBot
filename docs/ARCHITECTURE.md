@@ -101,8 +101,6 @@
 ### ⏳ 尚未完成的设计功能（按规划后续迭代）
 1. **推荐走法列表（非核心）**：涉及 LLM 推荐与 Stockfish 引擎推荐冲突时的自由切换按钮（目前已在底层提供 `analyse` 与 `AgentTools` 数据基础）。
 2. **网络双人对弈（非核心）**：网络通信与房间匹配协议。
-3. **树形变例生成（非核心）**：平行分支棋局管理（数据层已预留 `fen_after` 快照）。
-4. **真实在线 LLM 生产接入**：接入 DeepSeek / OpenAI API key 进行生产级对话（目前已完备基类、请求体与测试用 EchoAgent 占位）。
 
 ---
 
@@ -211,8 +209,5 @@
 
 ## 四、未来功能扩展标准契约
 
-### 1. 接入真实大语言模型 (LLM)
-在子类中实现 `reply(self, request: AgentRequest) -> str`，并可在内部调用 `request.tools.read_engine_state()` 或 `request.tools.read_database()`。
-
-### 2. 树形变例分析
-读取 `MoveRecord` 中的 `fen_after_white` 或 `fen_after_black`，调用 `GameController.new_game(fen=...)` 无缝分支开局。
+### 1. 接入与扩展真实大语言模型 (LLM)
+在子类中实现 `reply(self, request: AgentRequest) -> str`，支持配置 `reasoning_effort` 与 `stream` 模式，并可在内部调用 `request.tools.read_engine_state()` 或 `request.tools.read_database()`。

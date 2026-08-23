@@ -1,6 +1,6 @@
 """
 走法历史记录与双栏记谱管理 (模块3) - 记谱的单一数据源
-每条记录附带 FEN 快照, 为树形变例等未来功能预留
+每条记录附带 FEN 快照，维护对局走法与局面演进
 """
 from dataclasses import dataclass
 from typing import List, Tuple, Optional

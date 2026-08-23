@@ -6,6 +6,7 @@ LLMAgent 单元测试
 - 验证 API 端点构建逻辑 (Ollama vs OpenAI 兼容)
 """
 import os
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -262,6 +263,37 @@ class TestLLMAgentAPICall(unittest.TestCase):
         agent = LLMAgent(api_key="sk-fake")
         with self.assertRaises(ValueError):
             agent._call_chat_api([{"role": "user", "content": "hi"}])
+
+    @patch("urllib.request.urlopen")
+    def test_successful_stream_api_call(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.__iter__.return_value = [
+            b'data: {"choices":[{"delta":{"content":"\xe4\xbd\xa0\xe5\xa5\xbd"}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"\xef\xbc\x8c\xe4\xb8\xbb\xe4\xba\xba\xef\xbc\x81"}}]}\n',
+            b'data: [DONE]\n',
+        ]
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        agent = LLMAgent(api_key="sk-fake", stream=True)
+        result = agent._call_chat_api([{"role": "user", "content": "hi"}])
+        self.assertEqual(result, "你好，主人！")
+
+    @patch("urllib.request.urlopen")
+    def test_reasoning_effort_in_payload(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"choices":[{"message":{"content":"ok"}}]}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        agent = LLMAgent(api_key="sk-fake", reasoning_effort="high")
+        agent._call_chat_api([{"role": "user", "content": "hi"}])
+
+        called_req = mock_urlopen.call_args[0][0]
+        body = json.loads(called_req.data.decode("utf-8"))
+        self.assertEqual(body.get("reasoning_effort"), "high")
 
     def test_reply_falls_back_on_network_error(self):
         agent = LLMAgent(api_key="sk-fake")

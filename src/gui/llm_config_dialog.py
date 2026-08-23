@@ -1,6 +1,6 @@
 """
 LLM 配置对话框 (模块1 - GUI)
-让用户在界面中填入 API Key / Base URL / 模型名称, 无需依赖环境变量
+让用户在界面中填入 API Key / Base URL / 模型名称 / 思考档位 / 流式输出, 无需依赖环境变量
 
 设计原则 (遵循 AGENTS.md):
   - 纯 GUI 组件, 只负责收集输入并通过信号返回配置字典
@@ -11,16 +11,8 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
-    QDialogButtonBox, QLabel, QCheckBox, QFrame
+    QDialogButtonBox, QLabel, QCheckBox, QComboBox
 )
-
-
-# 预设的常用 API 提供商 (用户可一键选择, 也可自定义)
-PROVIDER_PRESETS = [
-    ("DeepSeek (默认)", "https://api.deepseek.com", "deepseek-chat"),
-    ("OpenAI", "https://api.openai.com", "gpt-4o-mini"),
-    ("Ollama 本地", "http://localhost:11434", "llama3"),
-]
 
 
 class LLMConfigDialog(QDialog):
@@ -34,11 +26,17 @@ class LLMConfigDialog(QDialog):
         """
         Args:
             current_config: 当前 LLMAgent 的配置, 用于预填表单
-                {"api_base": str, "api_key": str, "model": str}
+                {
+                    "api_base": str,
+                    "api_key": str,
+                    "model": str,
+                    "reasoning_effort": str,
+                    "stream": bool,
+                }
         """
         super().__init__(parent)
         self.setWindowTitle("AI 女仆连接配置")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self.setStyleSheet("""
             QDialog {
                 background-color: #0b0f19;
@@ -63,6 +61,24 @@ class LLMConfigDialog(QDialog):
             QLineEdit[echoMode="2"] {
                 font-family: Consolas, "Courier New", monospace;
             }
+            QComboBox {
+                background-color: #1e293b;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }
+            QComboBox:hover {
+                border-color: #475569;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1e293b;
+                color: #f8fafc;
+                selection-background-color: #3b82f6;
+                border: 1px solid #334155;
+                padding: 4px;
+            }
         """)
 
         current_config = current_config or {}
@@ -73,56 +89,21 @@ class LLMConfigDialog(QDialog):
     def _build_ui(self, current: dict):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         # 标题说明
-        title = QLabel("⚙️ AI 女仆连接配置")
+        title = QLabel("⚙️ AI 女仆连接配置 (OpenAI 兼容)")
         title.setStyleSheet("font-size: 15px; font-weight: 700; color: #38bdf8;")
         layout.addWidget(title)
 
         hint = QLabel(
             "填写下方信息后, ChessMaid 即可接入真实大语言模型进行棋艺教学。\n"
-            "配置仅保存在本次运行期间; 留空 API Key 则使用本地降级回复。"
+            "支持 OpenAI 标准思考档位 (reasoning_effort) 与流式输出 (Stream)。\n"
+            "留空 API Key 则自动使用本地降级回复。"
         )
         hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-
-        # 预设提供商快捷标签 (点击填充对应 Base URL 与 Model)
-        preset_label = QLabel("快捷预设:")
-        preset_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
-        layout.addWidget(preset_label)
-
-        from PySide6.QtWidgets import QHBoxLayout, QPushButton
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(6)
-        for name, base, model in PROVIDER_PRESETS:
-            btn = QPushButton(name)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1e293b;
-                    color: #38bdf8;
-                    border: 1px solid #334155;
-                    border-radius: 4px;
-                    padding: 3px 8px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #0369a1;
-                    color: #ffffff;
-                }
-            """)
-            # 注意闭包变量捕获: 用默认参数绑定当前值
-            btn.clicked.connect(lambda _checked=False, b=base, m=model: self._apply_preset(b, m))
-            preset_row.addWidget(btn)
-        preset_row.addStretch()
-        layout.addLayout(preset_row)
-
-        # 分割线
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: #1e293b;")
-        layout.addWidget(sep)
 
         # 表单字段
         form = QFormLayout()
@@ -131,7 +112,7 @@ class LLMConfigDialog(QDialog):
 
         # API Base URL
         self.base_input = QLineEdit(current.get("api_base", ""))
-        self.base_input.setPlaceholderText("https://api.deepseek.com")
+        self.base_input.setPlaceholderText("例如: https://api.deepseek.com 或 https://api.openai.com")
         form.addRow("API 基地址 (Base URL):", self.base_input)
 
         # API Key (密码模式, 遮罩显示)
@@ -148,8 +129,31 @@ class LLMConfigDialog(QDialog):
 
         # 模型名称
         self.model_input = QLineEdit(current.get("model", ""))
-        self.model_input.setPlaceholderText("deepseek-chat")
+        self.model_input.setPlaceholderText("例如: deepseek-chat, gpt-4o, deepseek-reasoner")
         form.addRow("模型名称 (Model):", self.model_input)
+
+        # 思考档位 (reasoning_effort)
+        self.reasoning_combo = QComboBox()
+        self.reasoning_combo.addItem("自动 / 不设 (auto/default)", "auto")
+        self.reasoning_combo.addItem("低 (low)", "low")
+        self.reasoning_combo.addItem("中 (medium)", "medium")
+        self.reasoning_combo.addItem("高 (high)", "high")
+        self.reasoning_combo.addItem("关闭思考 (none)", "none")
+
+        current_effort = str(current.get("reasoning_effort", "auto")).lower()
+        effort_index = 0
+        for i in range(self.reasoning_combo.count()):
+            if self.reasoning_combo.itemData(i) == current_effort:
+                effort_index = i
+                break
+        self.reasoning_combo.setCurrentIndex(effort_index)
+        form.addRow("思考档位 (Reasoning):", self.reasoning_combo)
+
+        # 流式输出 (stream)
+        self.chk_stream = QCheckBox("启用流式响应传输 (Stream)")
+        self.chk_stream.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+        self.chk_stream.setChecked(bool(current.get("stream", False)))
+        form.addRow("流式输出 (Stream):", self.chk_stream)
 
         layout.addLayout(form)
 
@@ -176,7 +180,6 @@ class LLMConfigDialog(QDialog):
                     background-color: #3b82f6;
                 }
             """)
-            # 取消按钮使用次级样式
         buttons.button(QDialogButtonBox.Cancel).setStyleSheet("""
             QPushButton {
                 background-color: #1e293b;
@@ -198,13 +201,6 @@ class LLMConfigDialog(QDialog):
 
     # ---------- 辅助方法 ----------
 
-    def _apply_preset(self, base: str, model: str):
-        """应用预设提供商配置 (保留用户已输入的 Key)"""
-        self.base_input.setText(base)
-        self.model_input.setText(model)
-        # 聚焦到 Key 输入框, 便于用户继续填密钥
-        self.key_input.setFocus()
-
     def _toggle_key_visibility(self, checked: bool):
         """切换 API Key 明文/密文显示"""
         self.key_input.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
@@ -213,12 +209,20 @@ class LLMConfigDialog(QDialog):
         """返回用户填写的配置字典
 
         Returns:
-            {"api_base": str, "api_key": str, "model": str}
+            {
+                "api_base": str,
+                "api_key": str,
+                "model": str,
+                "reasoning_effort": str,
+                "stream": bool,
+            }
         """
         return {
             "api_base": self.base_input.text().strip(),
             "api_key": self.key_input.text().strip(),
             "model": self.model_input.text().strip(),
+            "reasoning_effort": self.reasoning_combo.currentData(),
+            "stream": self.chk_stream.isChecked(),
         }
 
     @staticmethod
@@ -229,11 +233,11 @@ class LLMConfigDialog(QDialog):
         """静态便捷方法: 弹出模态对话框, 返回配置字典或 None
 
         Args:
-            current_config: 预填配置 (含 api_base/api_key/model)
+            current_config: 预填配置 (含 api_base/api_key/model/reasoning_effort/stream)
             parent: 父窗口
 
         Returns:
-            用户确认 -> {"api_base":..., "api_key":..., "model":...}
+            用户确认 -> {"api_base":..., "api_key":..., "model":..., "reasoning_effort":..., "stream":...}
             用户取消 -> None
         """
         dialog = LLMConfigDialog(current_config=current_config, parent=parent)

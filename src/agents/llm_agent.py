@@ -3,16 +3,19 @@
 通过 OpenAI 兼容 API (DeepSeek / OpenAI / Ollama / vLLM 等) 接入真实 LLM
 
 环境变量配置:
-  LLM_API_BASE  - API 基地址 (默认: https://api.deepseek.com)
-  LLM_API_KEY   - API 密钥 (默认空, 不设则回退到本地描述性回复)
-  LLM_MODEL     - 模型名称 (默认: deepseek-chat)
-  LLM_TIMEOUT   - 请求超时秒数 (默认: 60)
-  LLM_MAX_TOKENS - 最大生成 token 数 (默认: 1024)
+  LLM_API_BASE        - API 基地址 (默认: https://api.deepseek.com)
+  LLM_API_KEY         - API 密钥 (默认空, 不设则回退到本地描述性回复)
+  LLM_MODEL           - 模型名称 (默认: deepseek-chat)
+  LLM_TIMEOUT         - 请求超时秒数 (默认: 60)
+  LLM_MAX_TOKENS      - 最大生成 token 数 (默认: 1024)
+  LLM_REASONING_EFFORT - 思考档位 / 推理强度 (默认: "auto", 可选 "auto", "low", "medium", "high", "none")
+  LLM_STREAM          - 是否启用流式输出 (默认: False)
 
 设计要点:
   1. 将局面快照 (FEN / PGN / 回合方 / 将军状态) 注入 system 消息, 确保 LLM 始终拥有棋盘上下文
   2. 当 AgentTools 可用时, 主动读取 Stockfish 引擎评估并注入上下文 (含异常容错)
-  3. API 不可用或 Key 未配置时, reply() 自动回退到内置描述性文本, 保证链路易用
+  3. 支持 OpenAI 标准兼容的 reasoning_effort 参数与 stream 模式解析
+  4. API 不可用或 Key 未配置时, reply() 自动回退到内置描述性文本, 保证链路易用
 """
 import json
 import os
@@ -35,18 +38,22 @@ class LLMAgent(ChessAgent):
         model: Optional[str] = None,
         timeout: int = 60,
         max_tokens: int = 1024,
+        reasoning_effort: Optional[str] = None,
+        stream: Optional[bool] = None,
         persona_prompt: Optional[str] = None,
     ):
         """
         初始化 LLMAgent。
 
         参数:
-            api_base:   API 基地址, 如 https://api.deepseek.com 或 http://localhost:11434/v1
-            api_key:    API 密钥, 不传则从环境变量 LLM_API_KEY 读取
-            model:      模型名称, 如 deepseek-chat、gpt-4o、llama3
-            timeout:    请求超时秒数
-            max_tokens: 最大生成 token 数
-            persona_prompt: 女仆人设 Prompt, 不传则从环境变量或默认值读取
+            api_base:         API 基地址, 如 https://api.deepseek.com 或 http://localhost:11434/v1
+            api_key:          API 密钥, 不传则从环境变量 LLM_API_KEY 读取
+            model:            模型名称, 如 deepseek-chat、gpt-4o、deepseek-reasoner
+            timeout:          请求超时秒数
+            max_tokens:       最大生成 token 数
+            reasoning_effort: 思考档位/推理强度 ("auto", "low", "medium", "high", "none")
+            stream:           是否开启流式输出 (SSE 聚合解析)
+            persona_prompt:   女仆人设 Prompt, 不传则从环境变量或默认值读取
         """
         self.api_base = api_base or os.environ.get("LLM_API_BASE", "https://api.deepseek.com")
         # 兼容 Ollama 等本地无 Key 服务
@@ -54,6 +61,12 @@ class LLMAgent(ChessAgent):
         self.model = model or os.environ.get("LLM_MODEL", "deepseek-chat")
         self.timeout = timeout
         self.max_tokens = int(os.environ.get("LLM_MAX_TOKENS", str(max_tokens)))
+
+        env_reasoning = os.environ.get("LLM_REASONING_EFFORT", "auto")
+        self.reasoning_effort = (reasoning_effort if reasoning_effort is not None else env_reasoning).strip().lower()
+
+        env_stream = os.environ.get("LLM_STREAM", "false").strip().lower() in ("true", "1", "yes")
+        self.stream = stream if stream is not None else env_stream
 
         default_persona = (
             "你是一位精通国际象棋且温柔细致的AI棋艺女仆助理【ChessMaid】。"
@@ -206,14 +219,22 @@ class LLMAgent(ChessAgent):
     # ---------- API 通信 ----------
 
     def _call_chat_api(self, messages: list[dict]) -> str:
-        """调用 OpenAI 兼容 /v1/chat/completions 接口, 返回回复文本"""
+        """调用 OpenAI 兼容 /v1/chat/completions 接口, 返回回复文本 (支持 stream 与 reasoning_effort)"""
         url = self._chat_endpoint()
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "max_tokens": self.max_tokens,
             "temperature": 0.7,
         }
+
+        # OpenAI 标准规范: reasoning_effort ("low", "medium", "high")
+        if self.reasoning_effort and self.reasoning_effort not in ("auto", "none", ""):
+            payload["reasoning_effort"] = self.reasoning_effort
+
+        if self.stream:
+            payload["stream"] = True
+
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -224,8 +245,12 @@ class LLMAgent(ChessAgent):
             },
             method="POST",
         )
+
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            if self.stream:
+                return self._parse_stream_response(resp)
             body = resp.read().decode("utf-8")
+
         result = json.loads(body)
         choices = result.get("choices", [])
         if not choices:
@@ -234,6 +259,32 @@ class LLMAgent(ChessAgent):
         if not content.strip():
             raise ValueError("API 返回空内容")
         return content
+
+    def _parse_stream_response(self, resp) -> str:
+        """解析 SSE (Server-Sent Events) 流式响应数据"""
+        chunks = []
+        for line_bytes in resp:
+            line = line_bytes.decode("utf-8").strip()
+            if not line:
+                continue
+            if line.startswith("data:"):
+                raw_data = line[len("data:"):].strip()
+                if raw_data == "[DONE]":
+                    break
+                try:
+                    data_obj = json.loads(raw_data)
+                    choices = data_obj.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        part = delta.get("content", "")
+                        if part:
+                            chunks.append(part)
+                except Exception:
+                    continue
+        full_content = "".join(chunks).strip()
+        if not full_content:
+            raise ValueError("流式输出返回空内容")
+        return full_content
 
     def _chat_endpoint(self) -> str:
         """拼装 Chat Completions 端点 URL"""

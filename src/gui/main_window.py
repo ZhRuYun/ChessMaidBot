@@ -289,6 +289,8 @@ class MainWindow(QMainWindow):
             api_base=new_config.get("api_base") or None,
             api_key=new_config.get("api_key") or None,
             model=new_config.get("model") or None,
+            reasoning_effort=new_config.get("reasoning_effort") or None,
+            stream=new_config.get("stream", False),
             persona_prompt=self.current_persona,
         )
         self._sync_llm_connection_status()
@@ -297,7 +299,8 @@ class MainWindow(QMainWindow):
         if self.agent.api_key:
             QMessageBox.information(
                 self, "AI 女仆已连接",
-                f"已成功配置 AI 女仆连接！\n\n模型: {self.agent.model}\n基地址: {self.agent.api_base}\n\n"
+                f"已成功配置 AI 女仆连接！\n\n模型: {self.agent.model}\n基地址: {self.agent.api_base}\n"
+                f"思考档位: {self.agent.reasoning_effort}\n流式输出: {'开启' if self.agent.stream else '关闭'}\n\n"
                 f"现在 ChessMaid 将使用真实大语言模型进行棋艺教学。"
             )
         else:
@@ -314,6 +317,8 @@ class MainWindow(QMainWindow):
                 "api_base": self.agent.api_base,
                 "api_key": self.agent.api_key,
                 "model": self.agent.model,
+                "reasoning_effort": self.agent.reasoning_effort,
+                "stream": self.agent.stream,
             }
         return {}
 
