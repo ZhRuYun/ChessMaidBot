@@ -16,14 +16,20 @@ class TestHistoryStore(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_save_and_list(self):
-        path = self.store.save_game('[Event "T"]\n\n1. e4 *\n', result="1-0")
+    def test_save_and_parse_with_llm_summary(self):
+        path = self.store.save_game(
+            '[Event "Test"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n',
+            result="1-0",
+            llm_summary="白方使用了学者将死（Scholar's Mate），黑方防守疏忽。",
+        )
         self.assertTrue(path.exists())
-        self.assertIn("1-0", path.name)
+        content = HistoryStore.load_text(path)
+        self.assertIn("LLM GAME SUMMARY", content)
+        self.assertIn("学者将死", content)
 
-        games = self.store.list_games()
-        self.assertEqual(len(games), 1)
-        self.assertIn("1. e4", HistoryStore.load_text(games[0]))
+        parsed = HistoryStore.parse_game_file(content)
+        self.assertIn("Qxf7#", parsed["pgn"])
+        self.assertIn("学者将死", parsed["summary"])
 
     def test_no_overwrite_on_same_second(self):
         first = self.store.save_game("game-a", result="1-0")

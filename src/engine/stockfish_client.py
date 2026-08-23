@@ -1,18 +1,26 @@
 """
 Stockfish UCI 引擎客户端 (模块4)
 Stockfish 本质是由 stdin/stdout 控制的命令行程序, 本类封装其通信协议,
-向其余模块提供 best_move / analyse 等高层接口
+向其余模块提供 best_move / analyse / set_elo / set_skill_level 等高层接口
 
 使用方法:
     1. 将 Stockfish 可执行文件放置于 engines/ 目录 (路径见 config.ENGINE_PATH)
     2. with StockfishClient() as engine: engine.best_move(fen)
 
-强度调整使用官方 UCI 选项 "Skill Level" (0-20)
+强度调节支持:
+    - 官方 Skill Level (0-20)
+    - 目标 Elo 评分 (UCI_LimitStrength + UCI_Elo 1320~3190)
 """
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from ..config import ENGINE_PATH, STOCKFISH_DEFAULT_SKILL
+from ..config import (
+    ENGINE_PATH,
+    STOCKFISH_DEFAULT_SKILL,
+    STOCKFISH_DEFAULT_ELO,
+    STOCKFISH_MIN_ELO,
+    STOCKFISH_MAX_ELO,
+)
 
 
 class StockfishError(RuntimeError):
@@ -20,9 +28,15 @@ class StockfishError(RuntimeError):
 
 
 class StockfishClient:
-    def __init__(self, binary_path: Optional[Path] = None, skill_level: int = STOCKFISH_DEFAULT_SKILL):
+    def __init__(
+        self,
+        binary_path: Optional[Path] = None,
+        skill_level: int = STOCKFISH_DEFAULT_SKILL,
+        target_elo: Optional[int] = None,
+    ):
         self.binary_path = Path(binary_path) if binary_path else ENGINE_PATH
         self.skill_level = skill_level
+        self.target_elo = target_elo
         self._proc = None
 
     @property
@@ -45,7 +59,10 @@ class StockfishClient:
         )
         self._send("uci")
         self._read_until("uciok")
-        self.set_skill_level(self.skill_level)
+        if self.target_elo is not None:
+            self.set_elo(self.target_elo)
+        else:
+            self.set_skill_level(self.skill_level)
 
     def _send(self, command: str):
         if self._proc is None or self._proc.stdin is None:
@@ -68,10 +85,19 @@ class StockfishClient:
                 return line
 
     def set_skill_level(self, skill: int):
-        """官方 UCI 选项: Skill Level 0(最弱)-20(最强)"""
+        """官方 UCI 选项: Skill Level 0(最弱)-20(最强), 关闭 Elo 限制"""
         self.skill_level = max(0, min(20, skill))
+        self.target_elo = None
         if self._proc is not None and self._proc.stdin is not None:
+            self._send("setoption name UCI_LimitStrength value false")
             self._send(f"setoption name Skill Level value {self.skill_level}")
+
+    def set_elo(self, elo: int):
+        """官方 UCI 参数控制 Stockfish 目标 Elo 等级分 (UCI_LimitStrength + UCI_Elo)"""
+        self.target_elo = max(STOCKFISH_MIN_ELO, min(STOCKFISH_MAX_ELO, elo))
+        if self._proc is not None and self._proc.stdin is not None:
+            self._send("setoption name UCI_LimitStrength value true")
+            self._send(f"setoption name UCI_Elo value {self.target_elo}")
 
     def _sync(self):
         self._send("isready")

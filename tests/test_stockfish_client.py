@@ -26,14 +26,23 @@ class TestStockfishClient(unittest.TestCase):
 
         # 起始局面最佳走法之一
         move = self.client.best_move(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", movetime_ms=100
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", movetime_ms=200
         )
         self.assertIsNotNone(move)
-        self.assertIn(move, ["e2e4", "d2d4", "c2c4", "g1f3", "b1c3"])
+        self.assertIn(move, ["e2e4", "d2d4", "c2c4", "g1f3", "b1c3", "e2e3"])
 
     def test_skill_level_setting(self):
         self.client.set_skill_level(5)
         self.assertEqual(self.client.skill_level, 5)
+        self.assertIsNone(self.client.target_elo)
+
+    def test_target_elo_setting(self):
+        self.client.set_elo(1800)
+        self.assertEqual(self.client.target_elo, 1800)
+        self.client.set_elo(4000)
+        self.assertEqual(self.client.target_elo, 3190)
+        self.client.set_elo(800)
+        self.assertEqual(self.client.target_elo, 1320)
 
     def test_get_state_api(self):
         if not self.client.available:

@@ -1,8 +1,16 @@
 """
 对弈模式管理器 (模块2 - 调度层)
-当前实现本地双人; 人机 (Stockfish) 与女仆 (LLM) 模式预留接入点
+维护当前对弈模式（本地双人、人机 Stockfish 对弈、女仆 LLM 陪练）与引擎强度（Skill / 目标 Elo）
 """
 from enum import Enum
+from typing import Optional
+
+from ..config import (
+    STOCKFISH_DEFAULT_SKILL,
+    STOCKFISH_DEFAULT_ELO,
+    STOCKFISH_MIN_ELO,
+    STOCKFISH_MAX_ELO,
+)
 
 
 class GameMode(Enum):
@@ -25,7 +33,9 @@ class GameModeManager:
 
     def __init__(self):
         self.mode = GameMode.LOCAL_PVP
-        self.engine_skill = 10
+        self.engine_skill = STOCKFISH_DEFAULT_SKILL
+        self.target_elo: Optional[int] = STOCKFISH_DEFAULT_ELO
+        self.use_elo: bool = True  # 默认启用目标 Elo 控制
 
     def set_mode(self, mode: GameMode):
         self.mode = mode
@@ -40,11 +50,18 @@ class GameModeManager:
     def set_engine_skill(self, skill: int):
         lo, hi = STOCKFISH_SKILL_RANGE
         self.engine_skill = max(lo, min(hi, skill))
+        self.use_elo = False
+
+    def set_target_elo(self, elo: int):
+        self.target_elo = max(STOCKFISH_MIN_ELO, min(STOCKFISH_MAX_ELO, elo))
+        self.use_elo = True
 
     def player_names(self):
         """按模式返回 (白方, 黑方) 对局头名称"""
         if self.mode == GameMode.VS_ENGINE:
-            return "Player", f"Stockfish (Lv.{self.engine_skill})"
+            desc = f"Elo {self.target_elo}" if self.use_elo and self.target_elo else f"Lv.{self.engine_skill}"
+            return "Player", f"Stockfish ({desc})"
         if self.mode == GameMode.VS_MAID_LLM:
             return "Player", "ChessMaid"
         return "Player 1", "Player 2"
+

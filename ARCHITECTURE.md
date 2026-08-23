@@ -6,52 +6,55 @@
 
 ## 目录
 - [一、六大模块架构蓝图](#一六大模块架构蓝图)
-- [二、模块详细设计与职责](#二模块详细设计与职责)
+- [二、设计功能完成度一览（已完成 vs 尚未完成）](#二设计功能完成度一览已完成-vs-尚未完成)
+- [三、模块详细设计与职责](#三模块详细设计与职责)
   - [模块 1: GUI 交互界面](#模块-1-gui-交互界面-srcgui)
   - [模块 2: Controller 调度中枢层](#模块-2-controller-调度中枢层-srccontroller)
   - [模块 3: 国际象棋规则核心](#模块-3-国际象棋规则核心-srccore)
   - [模块 4: Stockfish 引擎接口](#模块-4-stockfish-引擎接口-srcengine)
   - [模块 5: Agent 接口及方法库](#模块-5-agent-接口及方法库-srcagents)
   - [模块 6: 数据库与棋局持久化](#模块-6-数据库与棋局持久化-srcdatabase)
-- [三、核心数据流向与时序](#三核心数据流向与时序)
-- [四、未来功能扩展标准契约](#四未来功能扩展标准契约)
+- [四、核心数据流向与时序](#四核心数据流向与时序)
+- [五、未来功能扩展标准契约](#五未来功能扩展标准契约)
 
 ---
 
 ## 一、六大模块架构蓝图
 
 ```
-                   ┌──────────────────────────────────────┐
-                   │            用户交互 (UI)              │
-                   └──────────────────┬───────────────────┘
-                                      │
- ┌────────────────────────────────────▼────────────────────────────────────┐
- │ 模块 1: GUI 交互界面 (src/gui/)                                          │
- │  ├── ChessBoardWidget (纯绘制与事件捕获)                                   │
- │  ├── ChatPanel (LLM 对话展示与 5 级教学开关)                             │
- │  ├── MoveHistoryPanel (双栏记谱纯渲染表格)                               │
- │  ├── ControlBar (模式选择/控制按钮)                                      │
- │  └── PromotionDialog (升变选择框)                                       │
- └─────────────────▲──────────────────────────────┬────────────────────────┘
-                   │ (信号监听与渲染刷新)             │ 仅发用户意图信号 (move_ready)
- ┌─────────────────┴──────────────────────────────▼────────────────────────┐
- │ 模块 2: Controller 调度中枢层 (src/controller/)                           │
- │  ├── GameController (棋局状态唯一写入口，统筹调度)                          │
- │  ├── GameModeManager (对弈模式状态机: 本地双人 / vs 引擎 / vs LLM)         │
- │  └── TeachingTriggers (教学触发器 5 级开关配置对象)                       │
- └───┬──────────────────────────┬─────────────────────────────┬────────────┘
-     │ 规则调用与状态修改          │ UCI 通信与分析               │ 终局归档保存
- ┌───▼──────────────────┐   ┌───▼───────────────────────┐   ┌─▼────────────┐
- │ 模块 3: 规则核心       │   │ 模块 4: Stockfish 引擎     │   │ 模块 6: 数据库 │
- │ src/core/            │   │ src/engine/               │   │ src/database/│
- │ ├── BoardState       │   │ └── StockfishClient       │   │ └── History- │
- │ └── MoveHistory-     │   │     (UCI 通信/多PV评估)     │   │     Store    │
- │     Manager          │   └───────────┬───────────────┘   └──────────────┘
- └──────────────────────┘               │ (提供引擎分析数据)
+                   ┌────────────────────────────────────────────────────────┐
+                   │                  用户交互操作 (UI)                     │
+                   └─────────────────────────┬──────────────────────────────┘
+                                             │
+ ┌───────────────────────────────────────────▼───────────────────────────────────────────┐
+ │ 模块 1: GUI 交互界面 (src/gui/)                                                         │
+ │  ├── MoveHistoryPanel (左侧: 双栏记谱纯渲染表格)                                        │
+ │  ├── ChessBoardWidget (中央: 纯绘制与事件捕获)                                         │
+ │  ├── ChatPanel (右侧: LLM 对话展示与 5 级教学开关)                                     │
+ │  ├── ControlBar (顶部: 模式选择 / Elo 调节 / 认输 / 求和 / 导出 PGN&FEN)                 │
+ │  └── PromotionDialog (升变选择框)                                                      │
+ └─────────────────▲───────────────────────────────────────┬──────────────────────────────┘
+                   │ (信号监听与渲染刷新)                      │ 仅发用户意图 (move_ready / resign / draw)
+ ┌─────────────────┴───────────────────────────────────────▼──────────────────────────────┐
+ │ 模块 2: Controller 调度中枢层 (src/controller/)                                          │
+ │  ├── GameController (棋局状态唯一写入口，统筹人机/本地对弈、认输求和、归档)             │
+ │  ├── EngineWorker (QThread 后台异步计算引擎着法，避免 UI 阻塞)                           │
+ │  ├── GameModeManager (对弈模式状态机与 Elo 评分管理)                                    │
+ │  └── TeachingTriggers (教学触发器 5 级开关配置对象)                                    │
+ └───┬──────────────────────────┬─────────────────────────────┬───────────────────────────┘
+     │ 规则调用与状态修改          │ UCI 目标 Elo 通信与分析      │ 终局归档 (PGN+LLM总结)
+ ┌───▼──────────────────┐   ┌───▼───────────────────────┐   ┌─▼───────────────────────────┐
+ │ 模块 3: 规则核心       │   │ 模块 4: Stockfish 引擎     │   │ 模块 6: 数据库与持久化      │
+ │ src/core/            │   │ src/engine/               │   │ src/database/               │
+ │ ├── BoardState       │   │ └── StockfishClient       │   │ └── HistoryStore            │
+ │ └── MoveHistory-     │   │     (UCI_Elo / 多PV评估)  │   │     (PGN+LLM复合结构/多库)  │
+ │     Manager          │   └───────────┬───────────────┘   └─────────────────────────────┘
+ └──────────────────────┘               │ (提供引擎分析数据与工具集)
                                 ┌───────▼───────────────┐
                                 │ 模块 5: Agent 接口     │
                                 │ src/agents/           │
                                 │ ├── ChessAgent (抽象)  │
+                                │ ├── AgentTools (方法库)│
                                 │ ├── AgentRequest (包) │
                                 │ └── EchoAgent/LLMAgent│
                                 └───────────────────────┘
@@ -59,27 +62,68 @@
 
 ---
 
-## 二、模块详细设计与职责
+## 二、设计功能完成度一览（已完成 vs 尚未完成）
+
+### ✅ 已完成的设计功能
+1. **模块 1: GUI 交互界面**
+   - 居中自研矢量高清直绘棋盘（抗锯齿、拖拽/点击、王车易位、升变选择、将军高亮）。
+   - 左侧纯双栏记谱表格（被动响应式整表重建，单一数据源）。
+   - 右侧 LLM 聊天面板（Markdown 气泡渲染、快捷提问条、5 级教学触发器复选框）。
+   - 顶部控制栏（模式下拉切换、Stockfish 目标 Elo 微调、新局、悔棋、翻转、认输、求和、PGN/FEN 导出）。
+2. **模块 2: Controller 调度中枢层**
+   - 棋局状态唯一写入口（`apply_move`, `undo`, `resign`, `offer_draw`, `accept_draw`, `new_game`）。
+   - 人机对弈调度机与 `EngineWorker`（`QThread`）后台异步计算线程（维持 UI 响应）。
+   - 对弈模式管理器（本地双人、人机对弈模式切换）。
+   - 教学触发器总开关与 4 级细分开关状态管理。
+3. **模块 3: 国际象棋规则核心**
+   - `BoardState` 规则封装（合法性校验、吃过路兵、被吃子堆栈、防越界回滚）。
+   - `MoveHistoryManager` 双栏记谱与黑先开局占位记谱支持。
+   - PGN / FEN 标准编解码与无损导入导出。
+4. **模块 4: Stockfish 引擎调度**
+   - `StockfishClient` 命令行 UCI 通信封装与容错降级。
+   - 通过官方 UCI 选项（`UCI_LimitStrength` + `UCI_Elo`）精确控制目标 Elo（1320 ~ 3190）。
+   - 多 PV（MultiPV）深度着法打分与最佳单步计算。
+   - 统一引擎状态查询接口 `get_state`。
+5. **模块 5: Agent 接口与方法库**
+   - 自定义 LLM 人设 Prompt 注入机制。
+   - 标准化上下文请求包 `AgentRequest`（打包 FEN、PGN、行动方、快照与人设）。
+   - 为 LLM 提供 4 大方法库接口 `AgentTools`（是否读库、读库哪部分、是否读引擎状态、读引擎哪部分）。
+6. **模块 6: 数据库与棋局持久化**
+   - 终局以“标准 PGN + LLM 对局总结”复合结构持久化至 `data/games/`。
+   - 复合棋谱文件解析方法 `parse_game_file`。
+   - 统一数据库查询接口 `query_database`。
+
+### ⏳ 尚未完成的设计功能（按规划后续迭代）
+1. **推荐走法列表（非核心）**：涉及 LLM 推荐与 Stockfish 引擎推荐冲突时的自由切换按钮（目前已在底层提供 `analyse` 与 `AgentTools` 数据基础）。
+2. **网络双人对弈（非核心）**：网络通信与房间匹配协议。
+3. **树形变例生成（非核心）**：平行分支棋局管理（数据层已预留 `fen_after` 快照）。
+4. **真实在线 LLM 生产接入**：接入 DeepSeek / OpenAI API key 进行生产级对话（目前已完备基类、请求体与测试用 EchoAgent 占位）。
+5. **外部开局库/战术库/残局库文件填充**：Polyglot/EPD/Syzygy 文件加载。
+
+---
+
+## 三、模块详细设计与职责
 
 ### 模块 1: GUI 交互界面 (`src/gui/`)
-* **设计原则**：**瘦视图（Thin View）**。GUI 组件只负责画面渲染与鼠标/键盘事件捕获，严禁包含任何棋局走法逻辑或直接修改规则状态。
+* **设计原则**：**瘦视图（Thin View）** 与 **三栏布局（左:记谱表, 中:棋盘, 右:LLM聊天）**。
 * **主要文件**：
-  * `chess_board.py` (`ChessBoardWidget`): 基于 PySide6 + QSvgRenderer 矢量直绘，支持高清抗锯齿、拖拽和点击落子、Lichess 风格王车易位、将军红色高亮与上步高亮。捕获到合法落子后发送 `move_ready(chess.Move)` 信号。
-  * `chat_panel.py` (`ChatPanel`): 包含女仆状态标头、5 级教学触发器复选框、Markdown 气泡流展示、快捷提问条及统一输入框。
-  * `move_history_panel.py` (`MoveHistoryPanel`): 纯双栏记谱表格，通过 `set_records(records)` 方法整表重建渲染。
-  * `control_bar.py` (`ControlBar`): 模式下拉列表、新对局、悔棋、翻转棋盘、导出 PGN/FEN 按钮。
+  * `chess_board.py` (`ChessBoardWidget`): 居中展示。基于 PySide6 + QSvgRenderer 矢量直绘，支持抗锯齿、拖拽和点击落子、Lichess 风格王车易位、将军红色高亮。捕获合法落子后发送 `move_ready(chess.Move)` 信号。
+  * `move_history_panel.py` (`MoveHistoryPanel`): 布局在左侧。纯双栏记谱表格，通过 `set_records(records)` 方法整表重建渲染。
+  * `chat_panel.py` (`ChatPanel`): 布局在右侧。包含女仆状态标头、5 级教学触发器复选框、Markdown 气泡流展示、快捷提问条及统一输入框。
+  * `control_bar.py` (`ControlBar`): 顶部控制条。包含模式下拉列表、Stockfish 目标 Elo 微调框（1320~3190）、新对局、悔棋、翻转棋盘、🤝 求和、🏳️ 认输、导出 PGN/FEN 按钮。
   * `main_window.py` (`MainWindow`): 装配中心，负责将 Controller 的广播信号与各 GUI 面板的槽函数连接。
 
 ### 模块 2: Controller 调度中枢层 (`src/controller/`)
-* **设计原则**：**棋局状态的唯一写路径**。所有落子、悔棋、新局、模式变更必须经由该层执行。
+* **设计原则**：**棋局状态的唯一写路径**。所有落子、悔棋、认输、求和、人机异步触发必须经由该层执行。
 * **主要文件**：
-  * `game_controller.py` (`GameController`):
+  * `game_controller.py` (`GameController`, `EngineWorker`):
     * 维护 `BoardState`、`MoveHistoryManager`、`GameModeManager`、`TeachingTriggers`、`HistoryStore`。
-    * 提供 `apply_move()`, `undo()`, `new_game()`, `export_pgn()`, `import_pgn()` 等写接口。
-    * 核心信号：`position_changed(last_move)`, `history_changed(records)`, `status_changed(text, in_check)`, `move_played(san, uci, is_white)`, `game_over(status)`, `game_reset()`, `mode_changed(mode)`。
+    * 提供 `apply_move()`, `undo()`, `resign()`, `offer_draw()`, `accept_draw()`, `new_game()`, `export_pgn()`, `import_pgn()` 等写接口。
+    * 启动 `EngineWorker` 子线程异步计算引擎走法，计算完成后自动投递 `apply_move`，并在思考期间通过 `engine_thinking_changed` 锁定棋盘。
+    * 在终局时组合 `export_pgn()` 与 LLM 总结回调，生成复合文件写入数据库。
   * `game_modes.py` (`GameModeManager`):
     * 枚举 `GameMode`: `LOCAL_PVP` (本地双人), `VS_ENGINE` (人机对弈), `VS_MAID_LLM` (女仆陪练)。
-    * 管理引擎难度等级（Skill Level: 0 ~ 20）。
+    * 管理引擎强度模式（`use_elo` 开关，目标 Elo: 1320 ~ 3190，Skill Level: 0 ~ 20）。
   * `teaching_triggers.py` (`TeachingTriggers`):
     * 数据结构：`master_enabled` (总开关), `eval_current_position` (当下局面评估), `suggest_moves` (建议着法), `eval_history_moves` (历史走法失误预警), `game_over_summary` (棋局结束总结)。
 
@@ -90,7 +134,7 @@
     * 维护底层 `chess.Board`、吃子堆栈 `captured_pieces`、PGN Header 字典。
     * 智能解析 Lichess 风格王车易位（点王再点车）及标准易位。
     * 严格管理合法性校验与走法执行（`make_move`, `undo_move`）。
-    * 提供无损 `export_pgn()` 与带回滚机制的 `import_pgn()`。
+    * 提供无损 `export_pgn(override_result)` 与带回滚机制的 `import_pgn()`。
   * `game_record.py` (`MoveHistoryManager`):
     * 管理 `MoveRecord`（包含步数、白方 SAN、黑方 SAN、走后各自的 FEN 快照）。
     * 完美支持黑先开局（首行白方记谱为 `...`）的追加与悔棋弹出。
@@ -101,9 +145,10 @@
   * `stockfish_client.py` (`StockfishClient`):
     * 自动探测 `engines/stockfish` 可执行文件。
     * 提供 `start()`, `quit()`, `set_skill_level(level: 0~20)`。
+    * 提供 `set_elo(elo: 1320~3190)`：通过 UCI 选项 `UCI_LimitStrength` 与 `UCI_Elo` 精准控制目标 Elo。
     * `best_move(fen, movetime_ms)`: 计算最佳单步走法。
     * `analyse(fen, depth, multipv)`: 返回多 PV 分析结果列表（包含评分 `score_cp` 与着法主变例 `pv`）。
-    * `get_state(fen, state_type, **kwargs)`: 为 Agent 与上层模块提供统一步进/分析状态查询接口。
+    * `get_state(fen, state_type, **kwargs)`: 为 Agent 与上层模块提供统一引擎状态查询接口。
 
 ### 模块 5: Agent 接口及方法库 (`src/agents/`)
 * **设计原则**：面向 LLM 对话的抽象与标准化上下文打包。
@@ -116,40 +161,35 @@
   * `echo_agent.py` (`EchoAgent`): 本地回声代理，用于无 LLM API 时的开发测试与链路占位。
 
 ### 模块 6: 数据库与棋局持久化 (`src/database/`)
-* **设计原则**：轻量文本持久化，优先面向 LLM 可读格式（PGN）。
+* **设计原则**：面向 LLM 纯文本设计的“标准 PGN + LLM 对局总结”复合结构持久化。
 * **主要文件**：
   * `history_store.py` (`HistoryStore`):
     * 存储根目录 `data/games/`。
-    * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档。
-    * 提供统一的 `query_database(category, **kwargs)` 接口，支持历史棋局、开局库、战术库、残局库等分类检索与格式转换。
+    * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档，并在文件末尾追加 `% --- LLM GAME SUMMARY ---` 总结区。
+    * 提供 `parse_game_file(content)` 分离 PGN 与总结文本。
+    * 提供统一的 `query_database(category, **kwargs)` 接口，支持历史棋局、开局库、战术库、残局库等分类检索。
 
 ---
 
 ## 三、核心数据流向与时序
 
+### 1. 玩家下棋与人机对弈走棋流程
 ```
-[玩家在棋盘上移动棋子]
+[玩家在中央棋盘操作]
         │
         ▼
-1. ChessBoardWidget 
-   └─► resolve_castling_or_normal_move() 校验
-   └─► 触发升变对话框 (如适用)
-   └─► emit move_ready(chess.Move)
+1. ChessBoardWidget ──► emit move_ready(chess.Move)
         │
         ▼
 2. GameController.apply_move(move)
    ├─► BoardState.make_move(move)
    ├─► MoveHistoryManager.add_move(san, is_white, fen)
    ├─► emit position_changed / history_changed / status_changed
-   ├─► 判定终局:
-   │    └─► 若 Game Over ──► HistoryStore.save_game(pgn, result) ──► emit game_over(status)
-   └─► emit move_played(san, uci, was_white)
-        │
-        ▼
-3. MainWindow (UI 响应)
-   ├─► ChessBoardWidget.show_move(last_move) (高亮与重绘)
-   ├─► MoveHistoryPanel.set_records(records) (整表刷新)
-   └─► on_move_played: 若处于将军且教学开关开启 ──► 调用 Agent 生成提醒消息 ──► ChatPanel 气泡展示
+   ├─► 判定是否人机对弈模式 (GameMode.VS_ENGINE 且轮到黑方):
+   │    └─► 启动 EngineWorker(QThread)
+   │         └─► StockfishClient.best_move() ──► emit move_computed(uci) ──► GameController.apply_move()
+   └─► 判定终局:
+        └─► 若 Game Over ──► 生成 LLM 总结 ──► HistoryStore.save_game(pgn, result, summary) ──► emit game_over
 ```
 
 ---
@@ -157,41 +197,7 @@
 ## 四、未来功能扩展标准契约
 
 ### 1. 接入真实大语言模型 (LLM)
-* **创建位置**：`src/agents/openai_agent.py` 或 `src/agents/deepseek_agent.py`
-* **实现方式**：
-  ```python
-  from src.agents.base import ChessAgent, AgentRequest
+在子类中实现 `reply(self, request: AgentRequest) -> str`，并可在内部调用 `request.tools.read_engine_state()` 或 `request.tools.read_database()`。
 
-  class DeepSeekMaidAgent(ChessAgent):
-      def __init__(self, api_key: str, base_url: str):
-          self.api_key = api_key
-          # 初始化 API 客户端...
-
-      def reply(self, request: AgentRequest) -> str:
-          system_prompt = request.persona_prompt
-          user_content = (
-              f"【对局状态】\n"
-              f"FEN: {request.snapshot.fen}\n"
-              f"行动方: {request.snapshot.turn}\n"
-              f"是否将军: {request.snapshot.in_check}\n\n"
-              f"【玩家提问】\n{request.user_message}"
-          )
-          # 调用 API 获取返回文本 (Markdown 格式)
-          return response_text
-  ```
-* **注入方式**：在 `main.py` 启动时直接实例化并注入 `MainWindow(agent=DeepSeekMaidAgent(...))`。
-
-### 2. 接入人机对弈与引擎自动走棋
-* **触发机制**：在 `GameController.move_played` 信号响应中，检测当前模式是否为 `GameMode.VS_ENGINE` 且当前轮到引擎方：
-  ```python
-  if self.modes.mode == GameMode.VS_ENGINE and self.board_state.turn == chess.BLACK:
-      with StockfishClient() as engine:
-          engine.set_skill_level(self.modes.engine_skill)
-          uci_move = engine.best_move(self.board_state.get_fen(), movetime_ms=800)
-          if uci_move:
-              self.apply_move(chess.Move.from_uci(uci_move))
-  ```
-
-### 3. 接入树形变例分析
-* **数据契约**：`MoveRecord` 中的 `fen_after_white` 与 `fen_after_black` 已为每步提供了完整局面快照。
-* **实现逻辑**：当用户在记谱表点击历史某一步并走棋时，读取该记录的 FEN，通过 `GameController.new_game(fen=selected_fen)` 即可无缝创建平行分支对局。
+### 2. 树形变例分析
+读取 `MoveRecord` 中的 `fen_after_white` 或 `fen_after_black`，调用 `GameController.new_game(fen=...)` 无缝分支开局。

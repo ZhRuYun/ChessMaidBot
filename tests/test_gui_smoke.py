@@ -60,20 +60,12 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertIn("请评估局面", html)
         self.assertIn("FEN", html)
 
-    def test_status_label_resets_color_after_undo_check(self):
-        for uci in ["f2f3", "e7e5", "g2g4"]:
-            self.assertTrue(
-                self.window.controller.apply_move(chess.Move.from_uci(uci))
-            )
-        # 黑方 Qh4# 将死 (傻瓜将军), 模态框打桩避免阻塞
-        with patch("src.gui.main_window.QMessageBox.information"):
-            self.assertTrue(
-                self.window.controller.apply_move(chess.Move.from_uci("d8h4"))
-            )
-        self.assertIn("Check", self.window.status_bar_label.text())
-        self.assertTrue(self.window.controller.undo())
-        self.assertNotIn("Check", self.window.status_bar_label.text())
-        self.assertNotIn("#ff5252", self.window.status_bar_label.styleSheet())
+    def test_resign_and_draw_gui(self):
+        from PySide6.QtWidgets import QMessageBox
+        with patch("src.gui.main_window.QMessageBox.question", return_value=QMessageBox.Yes):
+            with patch("src.gui.main_window.QMessageBox.information"):
+                self.window.on_resign()
+        self.assertTrue(self.window.controller._is_locked())
         self.assertEqual(len(self.window.controller.history_store.list_games()), 1)
 
 

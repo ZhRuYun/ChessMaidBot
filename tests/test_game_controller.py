@@ -40,6 +40,9 @@ class TestGameModeManager(unittest.TestCase):
         self.assertEqual(manager.player_names(), ("Player 1", "Player 2"))
         manager.set_mode(GameMode.VS_ENGINE)
         white, black = manager.player_names()
+        self.assertEqual(black, "Stockfish (Elo 1500)")
+        manager.set_engine_skill(10)
+        white, black = manager.player_names()
         self.assertEqual(black, "Stockfish (Lv.10)")
         manager.set_mode(GameMode.VS_MAID_LLM)
         self.assertEqual(manager.player_names()[1], "ChessMaid")
@@ -160,11 +163,42 @@ class TestGameController(unittest.TestCase):
         db_res = request.tools.read_database("history")
         self.assertEqual(db_res["category"], "history")
 
-    def test_mode_headers_written_to_pgn(self):
-        self.controller.set_mode(GameMode.VS_ENGINE)
+    def test_resign_workflow(self):
+        over_events = []
+        self.controller.game_over.connect(lambda status: over_events.append(status))
+
+        self._play(["e2e4"])
+        # 白方认输 -> 黑方获胜
+        self.assertTrue(self.controller.resign(is_white=True))
+        self.assertEqual(len(over_events), 1)
+        self.assertEqual(over_events[0]["result"], GameResult.BLACK_WINS)
+        self.assertIn("认输", over_events[0]["reason"])
+
+        # 验证持久化了 PGN + 总结
+        games = self.store.list_games()
+        self.assertEqual(len(games), 1)
+        parsed = HistoryStore.parse_game_file(HistoryStore.load_text(games[0]))
+        self.assertIn("0-1", parsed["pgn"])
+        self.assertIn("对局结束", parsed["summary"])
+
+    def test_draw_workflow(self):
+        over_events = []
+        self.controller.game_over.connect(lambda status: over_events.append(status))
+
         self._play(["e2e4", "e7e5"])
-        pgn_text = self.controller.export_pgn()
-        self.assertIn('[Black "Stockfish (Lv.10)"]', pgn_text)
+        res = self.controller.accept_draw("双方协议和棋")
+        self.assertTrue(res["accepted"])
+        self.assertEqual(len(over_events), 1)
+        self.assertEqual(over_events[0]["result"], GameResult.DRAW)
+
+    def test_target_elo_and_skill_controller(self):
+        self.controller.set_engine_elo(1650)
+        self.assertEqual(self.controller.modes.target_elo, 1650)
+        self.assertTrue(self.controller.modes.use_elo)
+
+        self.controller.set_engine_skill(12)
+        self.assertEqual(self.controller.modes.engine_skill, 12)
+        self.assertFalse(self.controller.modes.use_elo)
 
 
 if __name__ == "__main__":

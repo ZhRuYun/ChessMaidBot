@@ -205,7 +205,7 @@ class BoardState:
                 status_info["reason"] = "Draw by 5-fold repetition."
         return status_info
 
-    def export_pgn(self) -> str:
+    def export_pgn(self, override_result: Optional[str] = None) -> str:
         """导出当前对局为 PGN, 自动补全 Date 占位符与 Result 头"""
         headers = dict(self.custom_headers)
         if headers.get("Date", "").startswith("????"):
@@ -213,7 +213,7 @@ class BoardState:
 
         game = chess.pgn.Game.from_board(self.board)
         status = self.get_game_status()
-        headers["Result"] = status["result"]
+        headers["Result"] = override_result or status["result"]
         for key, val in headers.items():
             game.headers[key] = val
 
