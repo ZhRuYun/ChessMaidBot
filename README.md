@@ -140,10 +140,10 @@ ChessMaidBot/
 │   ├── core/                   # [模块3] 规则核心与记谱 (BoardState, MoveHistoryManager)
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
 │   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
-│   ├── agents/                 # [模块5] Agent 抽象、标准请求格式与 PromptBuilder (ChessAgent, PromptBuilder)
+│   ├── agents/                 # [模块5] Agent 抽象、LLM客户端与 PromptBuilder (ChessAgent, LLMAgent, PromptBuilder)
 │   ├── database/               # [模块6] 统一数据库管理(UnifiedDatabase)、历史棋局库持久化、开局库(Polyglot)、战术库(EPD)与残局库(Syzygy/启发式)
-│   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LoadingSpinner等)
-└── tests/                      # 单元测试与集成测试 (70+ 测试用例，100% 通过)
+│   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LLM/人设配置弹窗等)
+└── tests/                      # 单元测试与集成测试 (110+ 测试用例，100% 通过)
 ```
 
 ---
