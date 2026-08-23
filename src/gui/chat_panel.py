@@ -1,30 +1,30 @@
 """
-LLM 女仆互动对话面板 (Chat Panel)
-- 默认空白，无多余预置文本
-- 集成 5 大教学触发开关（1个总开关 + 4个细分开关）
+LLM 女仆互动对话面板 (模块1 - GUI)
+- 教学开关直接读写调度层的 TeachingTriggers 配置对象
+- 快捷提问与手动输入共用同一条消息链路 (均显示用户气泡)
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser,
     QLineEdit, QPushButton, QLabel, QGroupBox, QCheckBox, QFrame
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 import markdown
 
-class TeachingConfig:
-    def __init__(self):
-        self.master_enabled = True
-        self.eval_current_position = True
-        self.suggest_moves = True
-        self.eval_history_moves = True
-        self.game_over_summary = True
+from ..controller.teaching_triggers import TeachingTriggers
 
 class ChatPanel(QWidget):
     message_sent = Signal(str)
-    teaching_config_changed = Signal(object)
+    teaching_triggers_changed = Signal(object)
 
-    def __init__(self, parent=None):
+    QUICK_QUESTIONS = [
+        ("💡 寻求建议", "女仆，请问我现在该注意什么？有推荐的下法吗？"),
+        ("🔍 解释这步棋", "请为我分析并讲解刚刚这步棋的战术意图。"),
+        ("⚖️ 评估当前局面", "请帮我综合评估一下双方现在的优劣势。"),
+    ]
+
+    def __init__(self, triggers: TeachingTriggers, parent=None):
         super().__init__(parent)
-        self.teaching_config = TeachingConfig()
+        self.triggers = triggers
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -34,20 +34,20 @@ class ChatPanel(QWidget):
         header_layout = QHBoxLayout()
         self.avatar_label = QLabel("♟️")
         self.avatar_label.setStyleSheet("font-size: 22px;")
-        
+
         self.title_label = QLabel("ChessMaid 教学助手")
         self.title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #f0f0f0;")
-        
+
         self.status_badge = QLabel("● 在线")
         self.status_badge.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
-        
+
         header_layout.addWidget(self.avatar_label)
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.status_badge)
         layout.addLayout(header_layout)
 
-        # 2. 教学触发器控制组 (5个分级开关)
+        # 2. 教学触发器控制组 (1个总开关 + 4个细分开关)
         teaching_box = QGroupBox("🤖 女仆教学触发配置")
         teaching_box.setStyleSheet("""
             QGroupBox {
@@ -78,7 +78,7 @@ class ChatPanel(QWidget):
 
         # 总开关 (Master Switch)
         self.chk_master = QCheckBox("【总开关】开启女仆教学支持")
-        self.chk_master.setChecked(True)
+        self.chk_master.setChecked(self.triggers.master_enabled)
         self.chk_master.setStyleSheet("color: #4fc3f7; font-weight: bold;")
         self.chk_master.toggled.connect(self._on_master_toggled)
         t_layout.addWidget(self.chk_master)
@@ -96,26 +96,24 @@ class ChatPanel(QWidget):
         sub_layout.setSpacing(3)
 
         self.chk_eval_pos = QCheckBox("1. 当下局面评估")
-        self.chk_eval_pos.setChecked(True)
-        self.chk_eval_pos.toggled.connect(self._update_config)
-
         self.chk_suggest_moves = QCheckBox("2. 建议着法评估")
-        self.chk_suggest_moves.setChecked(True)
-        self.chk_suggest_moves.toggled.connect(self._update_config)
-
         self.chk_eval_history = QCheckBox("3. 历史走法评估 (失误预警)")
-        self.chk_eval_history.setChecked(True)
-        self.chk_eval_history.toggled.connect(self._update_config)
-
         self.chk_summary = QCheckBox("4. 棋局结束总结 (赛后复盘)")
-        self.chk_summary.setChecked(True)
-        self.chk_summary.toggled.connect(self._update_config)
 
-        for chk in [self.chk_eval_pos, self.chk_suggest_moves, self.chk_eval_history, self.chk_summary]:
+        self._sub_checks = [
+            (self.chk_eval_pos, "eval_current_position"),
+            (self.chk_suggest_moves, "suggest_moves"),
+            (self.chk_eval_history, "eval_history_moves"),
+            (self.chk_summary, "game_over_summary"),
+        ]
+        for chk, attr in self._sub_checks:
+            chk.setChecked(getattr(self.triggers, attr))
+            chk.toggled.connect(self._update_triggers)
             sub_layout.addWidget(chk)
 
         t_layout.addLayout(sub_layout)
         layout.addWidget(teaching_box)
+        self._on_master_toggled(self.triggers.master_enabled)
 
         # 3. 消息展示区 (默认完全空白)
         self.chat_display = QTextBrowser(self)
@@ -137,12 +135,8 @@ class ChatPanel(QWidget):
         # 4. 快捷提问按钮条
         quick_btn_layout = QHBoxLayout()
         quick_btn_layout.setSpacing(6)
-        
-        self.btn_ask_help = QPushButton("💡 寻求建议")
-        self.btn_explain = QPushButton("🔍 解释这步棋")
-        self.btn_eval = QPushButton("⚖️ 评估当前局面")
-
-        for btn in [self.btn_ask_help, self.btn_explain, self.btn_eval]:
+        for label, question in self.QUICK_QUESTIONS:
+            btn = QPushButton(label)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: #2b2b38;
@@ -157,6 +151,7 @@ class ChatPanel(QWidget):
                     color: #ffffff;
                 }
             """)
+            btn.clicked.connect(lambda _, q=question: self.send_message(q))
             quick_btn_layout.addWidget(btn)
 
         layout.addLayout(quick_btn_layout)
@@ -200,23 +195,24 @@ class ChatPanel(QWidget):
         input_layout.addWidget(self.send_btn)
         layout.addLayout(input_layout)
 
-        # 快捷按钮事件绑定
-        self.btn_ask_help.clicked.connect(lambda: self.message_sent.emit("女仆，请问我现在该注意什么？有推荐的下法吗？"))
-        self.btn_explain.clicked.connect(lambda: self.message_sent.emit("请为我分析并讲解刚刚这步棋的战术意图。"))
-        self.btn_eval.clicked.connect(lambda: self.message_sent.emit("请帮我综合评估一下双方现在的优劣势。"))
-
     def _on_master_toggled(self, checked: bool):
-        for chk in [self.chk_eval_pos, self.chk_suggest_moves, self.chk_eval_history, self.chk_summary]:
+        for chk, _attr in self._sub_checks:
             chk.setEnabled(checked)
-        self._update_config()
+        self._update_triggers()
 
-    def _update_config(self):
-        self.teaching_config.master_enabled = self.chk_master.isChecked()
-        self.teaching_config.eval_current_position = self.chk_eval_pos.isChecked()
-        self.teaching_config.suggest_moves = self.chk_suggest_moves.isChecked()
-        self.teaching_config.eval_history_moves = self.chk_eval_history.isChecked()
-        self.teaching_config.game_over_summary = self.chk_summary.isChecked()
-        self.teaching_config_changed.emit(self.teaching_config)
+    def _update_triggers(self):
+        self.triggers.master_enabled = self.chk_master.isChecked()
+        for chk, attr in self._sub_checks:
+            setattr(self.triggers, attr, chk.isChecked())
+        self.teaching_triggers_changed.emit(self.triggers)
+
+    def send_message(self, text: str):
+        """统一消息入口: 显示用户气泡并广播消息信号"""
+        text = text.strip()
+        if not text:
+            return
+        self.append_user_message(text)
+        self.message_sent.emit(text)
 
     def append_user_message(self, text: str):
         html = f"""
@@ -240,9 +236,8 @@ class ChatPanel(QWidget):
         self.chat_display.append(html)
 
     def _send_message(self):
-        text = self.input_field.text().strip()
-        if not text:
+        text = self.input_field.text()
+        if not text.strip():
             return
         self.input_field.clear()
-        self.append_user_message(text)
-        self.message_sent.emit(text)
+        self.send_message(text)

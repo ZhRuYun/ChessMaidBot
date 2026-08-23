@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 测试与工具缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 运行期生成的数据 (历史棋局库等)
+data/
+
+# 引擎二进制 (体积过大, 不入库)
+engines/
+
+# IDE
+.idea/
+.vscode/

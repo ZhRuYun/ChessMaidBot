@@ -1,0 +1,135 @@
+"""
+Stockfish UCI 引擎客户端 (模块4)
+Stockfish 本质是由 stdin/stdout 控制的命令行程序, 本类封装其通信协议,
+向其余模块提供 best_move / analyse 等高层接口
+
+使用方法:
+    1. 将 Stockfish 可执行文件放置于 engines/ 目录 (路径见 config.ENGINE_PATH)
+    2. with StockfishClient() as engine: engine.best_move(fen)
+
+强度调整使用官方 UCI 选项 "Skill Level" (0-20)
+"""
+from pathlib import Path
+from typing import Optional, Dict, List
+
+from ..config import ENGINE_PATH, STOCKFISH_DEFAULT_SKILL
+
+
+class StockfishError(RuntimeError):
+    pass
+
+
+class StockfishClient:
+    def __init__(self, binary_path: Optional[Path] = None, skill_level: int = STOCKFISH_DEFAULT_SKILL):
+        self.binary_path = Path(binary_path) if binary_path else ENGINE_PATH
+        self.skill_level = skill_level
+        self._proc = None
+
+    @property
+    def available(self) -> bool:
+        return self.binary_path.exists()
+
+    def start(self):
+        if self._proc is not None:
+            return
+        if not self.available:
+            raise StockfishError(f"未找到 Stockfish 引擎: {self.binary_path}")
+        import subprocess
+        self._proc = subprocess.Popen(
+            [str(self.binary_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        self._send("uci")
+        self._read_until("uciok")
+        self.set_skill_level(self.skill_level)
+
+    def _send(self, command: str):
+        if self._proc is None or self._proc.stdin is None:
+            raise StockfishError("引擎尚未启动")
+        self._proc.stdin.write(command + "\n")
+        self._proc.stdin.flush()
+
+    def _read_line(self) -> str:
+        if self._proc is None or self._proc.stdout is None:
+            raise StockfishError("引擎尚未启动")
+        line = self._proc.stdout.readline()
+        if not line:
+            raise StockfishError("引擎输出流已关闭")
+        return line.strip()
+
+    def _read_until(self, token: str) -> str:
+        while True:
+            line = self._read_line()
+            if line.startswith(token) or line == token:
+                return line
+
+    def set_skill_level(self, skill: int):
+        """官方 UCI 选项: Skill Level 0(最弱)-20(最强)"""
+        self.skill_level = max(0, min(20, skill))
+        self._send(f"setoption name Skill Level value {self.skill_level}")
+
+    def _sync(self):
+        self._send("isready")
+        self._read_until("readyok")
+
+    def best_move(self, fen: str, movetime_ms: int = 1000) -> Optional[str]:
+        """返回最佳走法 UCI (如 e2e4), 无合法走法时返回 None"""
+        self.start()
+        self._send(f"position fen {fen}")
+        self._send(f"go movetime {movetime_ms}")
+        line = self._read_until("bestmove")
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] != "(none)":
+            return parts[1]
+        return None
+
+    def analyse(self, fen: str, depth: int = 15, multipv: int = 1) -> List[Dict[str, object]]:
+        """固定深度分析, 返回 [{score_cp, pv}] (multipv 支持推荐走法列表)"""
+        self.start()
+        self._send(f"setoption name MultiPV value {multipv}")
+        self._sync()
+        self._send(f"position fen {fen}")
+        self._send(f"go depth {depth}")
+
+        results: Dict[int, Dict[str, object]] = {}
+        while True:
+            line = self._read_line()
+            if line.startswith("info") and " pv " in line and " score " in line:
+                multipv_index = 1
+                score_cp = None
+                pv: List[str] = []
+                tokens = line.split()
+                for i, tok in enumerate(tokens):
+                    if tok == "multipv" and i + 1 < len(tokens):
+                        multipv_index = int(tokens[i + 1])
+                    elif tok == "cp" and i + 1 < len(tokens):
+                        score_cp = int(tokens[i + 1])
+                    elif tok == "pv":
+                        pv = tokens[i + 1:]
+                        break
+                results[multipv_index] = {"score_cp": score_cp, "pv": pv}
+            elif line.startswith("bestmove"):
+                break
+        return [results[k] for k in sorted(results)]
+
+    def quit(self):
+        if self._proc is not None:
+            try:
+                self._send("quit")
+                self._proc.wait(timeout=3)
+            except Exception:
+                self._proc.kill()
+            finally:
+                self._proc = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.quit()
+        return False

@@ -1,13 +1,11 @@
 """
-丝滑、高清晰度、无残影的交互式棋盘 (Custom QWidget + Direct Vector/Pixmap Render)
-- 完美解决矢量锯齿模糊问题 (支持高分屏)
-- 完美解决 QGraphicsScene 残影和黑块异常
-- 支持鼠标平滑拖拽落子与纯点击选格落子
-- 支持 Lichess 标准王车易位 (点王再点车，或点王走到c/g列)
+交互式棋盘控件 (模块1 - GUI)
+- 高清矢量直绘, 支持鼠标拖拽与点击落子, Lichess 风格王车易位
+- 只读使用 BoardState 做规则查询; 走法经 move_ready 信号交由调度层应用
 """
 from typing import Optional, Dict, List
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QRect, QPoint, Signal
+from PySide6.QtCore import Qt, QRect, QPoint, QPointF, Signal
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPixmap, QFont
 )
@@ -21,15 +19,14 @@ from ..core.board_state import BoardState
 from .promotion_dialog import PromotionDialog
 
 class ChessBoardWidget(QWidget):
-    move_made = Signal(str, str)
-    game_status_changed = Signal(dict)
+    move_ready = Signal(object)  # chess.Move, 由调度层应用
 
     def __init__(self, board_state: BoardState, parent=None):
         super().__init__(parent)
         self.board_state = board_state
         self.square_size = DEFAULT_SQUARE_SIZE
         self.is_flipped = False
-        
+
         self.selected_square: Optional[int] = None
         self.legal_destinations: List[int] = []
         self.last_move: Optional[chess.Move] = None
@@ -55,21 +52,33 @@ class ChessBoardWidget(QWidget):
                 key = f"{color_prefix}{sym}"
                 svg_path = str(PIECES_DIR / f"{key}.svg")
                 renderer = QSvgRenderer(svg_path)
-                
+
                 pix = QPixmap(render_size, render_size)
                 pix.fill(Qt.transparent)
-                
+
                 painter = QPainter(pix)
                 painter.setRenderHint(QPainter.Antialiasing)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform)
                 renderer.render(painter)
                 painter.end()
-                
+
                 self.piece_pixmaps[key] = pix
 
     def flip_board(self):
         """翻转棋盘视角"""
         self.is_flipped = not self.is_flipped
+        self.update()
+
+    def show_move(self, move: Optional[chess.Move]):
+        """调度层确认走法后刷新上步高亮并重绘"""
+        self.last_move = move
+        self.update()
+
+    def reset_view(self):
+        """新对局时清空选中和高亮"""
+        self.selected_square = None
+        self.legal_destinations.clear()
+        self.last_move = None
         self.update()
 
     def square_to_col_row(self, square: int) -> tuple[int, int]:
@@ -95,6 +104,10 @@ class ChessBoardWidget(QWidget):
                 rank = 7 - row
             return chess.square(file, rank)
         return None
+
+    def _event_pos(self, event) -> QPoint:
+        pos = event.position() if isinstance(event.position(), QPointF) else event.pos()
+        return pos.toPoint()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -168,7 +181,7 @@ class ChessBoardWidget(QWidget):
                 dc, dr = self.square_to_col_row(dest_sq)
                 cx = dc * self.square_size + self.square_size // 2
                 cy = dr * self.square_size + self.square_size // 2
-                
+
                 target_piece = self.board_state.get_piece_at(dest_sq)
                 # 检查是否为吃子（或者是易位指向的车）
                 is_castling_rook = False
@@ -214,40 +227,37 @@ class ChessBoardWidget(QWidget):
                     painter.drawPixmap(drag_rect, pix)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            sq = self.pos_to_square(event.pos())
-            if sq is None:
-                return
+        if event.button() != Qt.LeftButton or self.board_state.is_game_over():
+            return
+        sq = self.pos_to_square(self._event_pos(event))
+        if sq is None:
+            return
 
-            # 如果当前已选中一个棋子，且点击了合法目的地，直接执行移动
-            if self.selected_square is not None and sq in self.legal_destinations:
-                self.execute_user_move(self.selected_square, sq)
-                return
+        # 如果当前已选中一个棋子，且点击了合法目的地，直接执行移动
+        if self.selected_square is not None and sq in self.legal_destinations:
+            self.execute_user_move(self.selected_square, sq)
+            return
 
-            # 选中自己阵营的棋子
-            piece = self.board_state.get_piece_at(sq)
-            if piece and piece.color == self.board_state.turn:
-                self.selected_square = sq
-                self.dragging_square = sq
-                self.drag_current_pos = event.pos()
-                self._compute_legal_destinations(sq)
-                self.update()
-            else:
-                self.selected_square = None
-                self.legal_destinations.clear()
-                self.dragging_square = None
-                self.drag_current_pos = None
-                self.update()
+        # 选中自己阵营的棋子
+        piece = self.board_state.get_piece_at(sq)
+        if piece and piece.color == self.board_state.turn:
+            self.selected_square = sq
+            self.dragging_square = sq
+            self.drag_current_pos = self._event_pos(event)
+            self._compute_legal_destinations(sq)
+            self.update()
+        else:
+            self._clear_selection()
 
     def mouseMoveEvent(self, event):
         if self.dragging_square is not None:
-            self.drag_current_pos = event.pos()
+            self.drag_current_pos = self._event_pos(event)
             self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.dragging_square is not None:
             from_sq = self.dragging_square
-            to_sq = self.pos_to_square(event.pos())
+            to_sq = self.pos_to_square(self._event_pos(event))
 
             self.dragging_square = None
             self.drag_current_pos = None
@@ -256,6 +266,13 @@ class ChessBoardWidget(QWidget):
                 self.execute_user_move(from_sq, to_sq)
             else:
                 self.update()
+
+    def _clear_selection(self):
+        self.selected_square = None
+        self.legal_destinations.clear()
+        self.dragging_square = None
+        self.drag_current_pos = None
+        self.update()
 
     def _compute_legal_destinations(self, from_sq: int):
         """计算合法目标格（包含王车易位时点击目标车）"""
@@ -280,36 +297,21 @@ class ChessBoardWidget(QWidget):
                         self.legal_destinations.append(chess.A8)
 
     def execute_user_move(self, from_sq: int, to_sq: int):
-        """执行移动、王车易位与升变解析"""
+        """解析用户意图 (升变/易位), 生成 chess.Move 交调度层应用"""
         promotion_piece = None
         if self.board_state.is_promotion_move(from_sq, to_sq):
             dialog = PromotionDialog(self.board_state.turn, self)
             if dialog.exec():
                 promotion_piece = dialog.selected_piece_type
             else:
-                self.selected_square = None
-                self.legal_destinations.clear()
-                self.update()
+                self._clear_selection()
                 return
 
         move = self.board_state.resolve_castling_or_normal_move(from_sq, to_sq, promotion_piece)
         if move is None:
-            self.selected_square = None
-            self.legal_destinations.clear()
-            self.update()
+            self._clear_selection()
             return
 
-        uci_str = move.uci()
-        success, san_str, _ = self.board_state.make_move(move)
-
-        if success:
-            self.last_move = move
-            self.selected_square = None
-            self.legal_destinations.clear()
-            self.update()
-            self.move_made.emit(san_str, uci_str)
-            self.game_status_changed.emit(self.board_state.get_game_status())
-        else:
-            self.selected_square = None
-            self.legal_destinations.clear()
-            self.update()
+        self.selected_square = None
+        self.legal_destinations.clear()
+        self.move_ready.emit(move)

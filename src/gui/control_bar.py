@@ -1,10 +1,13 @@
 """
-控制栏与状态栏控件 (Control Bar) - 支持 PGN/FEN 统一导出
+控制栏与状态栏控件 (模块1 - GUI)
+对弈模式下拉项与调度层 GameModeManager 的 MODE_LABELS 保持同源
 """
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QLabel, QComboBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
+
+from ..controller.game_modes import GameMode, MODE_LABELS
 
 class ControlBar(QWidget):
     new_game_requested = Signal()
@@ -24,11 +27,7 @@ class ControlBar(QWidget):
         mode_label = QLabel("对弈模式:")
         mode_label.setStyleSheet("color: #ccc; font-weight: bold; font-size: 13px;")
         self.mode_combo = QComboBox(self)
-        self.mode_combo.addItems([
-            "本地双人对战 (Local PvP)",
-            "人机对弈 (vs Stockfish)",
-            "女仆陪练 (vs Maid LLM)"
-        ])
+        self.mode_combo.addItems([MODE_LABELS[mode] for mode in GameMode])
         self.mode_combo.setStyleSheet("""
             QComboBox {
                 background-color: #2b2b38;

@@ -1,8 +1,11 @@
 """
-走法历史记谱面板 (Move History Table Panel)
+走法历史记谱面板 (模块1 - GUI)
+纯渲染组件: 从 core 的 MoveRecord 列表整表重建, 不维护自身状态
 """
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt
+
+from ..core.game_record import MoveRecord
 
 class MoveHistoryPanel(QWidget):
     def __init__(self, parent=None):
@@ -44,43 +47,27 @@ class MoveHistoryPanel(QWidget):
 
         layout.addWidget(self.table)
 
-    def add_move(self, san: str, is_white: bool):
-        """向记谱表添加一步走法"""
-        if is_white:
-            row_idx = self.table.rowCount()
-            self.table.insertRow(row_idx)
-            
-            num_item = QTableWidgetItem(f"{row_idx + 1}.")
-            num_item.setTextAlignment(Qt.AlignCenter)
-            white_item = QTableWidgetItem(san)
-            white_item.setTextAlignment(Qt.AlignCenter)
-            black_item = QTableWidgetItem("")
-            black_item.setTextAlignment(Qt.AlignCenter)
-            
-            self.table.setItem(row_idx, 0, num_item)
-            self.table.setItem(row_idx, 1, white_item)
-            self.table.setItem(row_idx, 2, black_item)
-        else:
-            row_idx = self.table.rowCount() - 1
-            if row_idx >= 0:
-                black_item = QTableWidgetItem(san)
-                black_item.setTextAlignment(Qt.AlignCenter)
-                self.table.setItem(row_idx, 2, black_item)
-        
+    def set_records(self, records: list):
+        """以核心记谱数据整表重建 (单一数据源, 悔棋/导入/重开均正确)"""
+        self.table.setRowCount(0)
+        for record in records:
+            self._append_record(record)
         self.table.scrollToBottom()
 
-    def clear(self):
-        """清空走法记录"""
-        self.table.setRowCount(0)
+    def _append_record(self, record: MoveRecord):
+        row_idx = self.table.rowCount()
+        self.table.insertRow(row_idx)
 
-    def undo_last_move(self):
-        """撤销最后一步记谱"""
-        row_count = self.table.rowCount()
-        if row_count == 0:
-            return
-        last_row = row_count - 1
-        black_item = self.table.item(last_row, 2)
-        if black_item and black_item.text().strip():
-            black_item.setText("")
-        else:
-            self.table.removeRow(last_row)
+        num_item = QTableWidgetItem(f"{record.move_number}.")
+        num_item.setTextAlignment(Qt.AlignCenter)
+        white_item = QTableWidgetItem(record.white_san)
+        white_item.setTextAlignment(Qt.AlignCenter)
+        black_item = QTableWidgetItem(record.black_san)
+        black_item.setTextAlignment(Qt.AlignCenter)
+
+        self.table.setItem(row_idx, 0, num_item)
+        self.table.setItem(row_idx, 1, white_item)
+        self.table.setItem(row_idx, 2, black_item)
+
+    def clear(self):
+        self.table.setRowCount(0)

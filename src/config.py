@@ -8,6 +8,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = BASE_DIR / "assets"
 PIECES_DIR = ASSETS_DIR / "pieces"
 
+# 运行期数据目录 (历史棋局库等, 已被 .gitignore 忽略)
+DATA_DIR = BASE_DIR / "data"
+GAMES_DIR = DATA_DIR / "games"
+
+# Stockfish 引擎 (模块4): 将可执行文件放入 engines/ 目录即可被识别
+ENGINE_DIR = BASE_DIR / "engines"
+ENGINE_PATH = ENGINE_DIR / "stockfish"
+STOCKFISH_DEFAULT_SKILL = 10
+
 # 棋盘与界面视觉配色 (Lichess 经典 Wood & Clean 风格)
 BOARD_THEME = {
     "light_square": "#F0D9B5",          # 浅色木纹格
