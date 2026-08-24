@@ -15,7 +15,8 @@ class PromptBuilder:
         snapshot: PositionSnapshot,
         triggers: TeachingTriggers,
         is_auto_move: bool = False,
-        extra_note: Optional[str] = None
+        extra_note: Optional[str] = None,
+        game_mode_name: Optional[str] = None,
     ) -> str:
         """
         根据快照与开关状态组装定制 Prompt。
@@ -55,12 +56,13 @@ class PromptBuilder:
         requirements_text = "\n".join(sections)
 
         trigger_source = "【玩家落子自动教学触发】" if is_auto_move else "【主动询问女仆教学指导】"
+        mode_text = f"\n- 当前游戏模式: {game_mode_name}" if game_mode_name else ""
         note_text = f"\n补充说明: {extra_note}" if extra_note else ""
 
         prompt = f"""{trigger_source}
 请根据以下国际象棋对局信息提供指导：
 
-【棋盘现状】
+【棋盘现状】{mode_text}
 - 局势状态: {"已终局 (" + snapshot.game_over_reason + ")" if snapshot.game_over_reason else "对弈中"}
 - 当前行动方: {snapshot.turn}
 - 最近一步: {snapshot.last_move_san or "开局初始"}

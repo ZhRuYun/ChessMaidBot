@@ -14,10 +14,12 @@ GAMES_DIR = DATA_DIR / "games"
 BOOKS_DIR = DATA_DIR / "books"
 TACTICS_DIR = DATA_DIR / "tactics"
 SYZYGY_DIR = DATA_DIR / "syzygy"
+CONFIG_FILE_PATH = DATA_DIR / "settings.json"
 
 # 数据库默认文件/目录路径 (支持本地 Polyglot .bin、EPD .epd 和 Syzygy .rtbw/.rtbz)
 OPENING_BOOK_PATH = BOOKS_DIR / "titans.bin"
 DEFAULT_TACTICS_PATH = TACTICS_DIR / "tactics.epd"
+DEFAULT_OPENINGS_JSON_PATH = BOOKS_DIR / "openings.json"
 DEFAULT_SYZYGY_PATH = SYZYGY_DIR
 
 # 自动确保数据大目录及各子库目录结构存在

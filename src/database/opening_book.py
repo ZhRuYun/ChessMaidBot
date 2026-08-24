@@ -5,13 +5,14 @@
   2. 开源 ECO (Encyclopaedia of Chess Openings) 局面命名与分类库
   3. 内置精选常用开局谱表与变例，支持优雅降级与本地自定义加载
 """
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 import chess
 import chess.polyglot
 
-from ..config import BOOKS_DIR, OPENING_BOOK_PATH
+from ..config import BOOKS_DIR, OPENING_BOOK_PATH, DEFAULT_OPENINGS_JSON_PATH
 
 
 @dataclass
@@ -145,9 +146,23 @@ DEFAULT_OPENING_PATTERNS: Dict[str, Dict[str, Any]] = {
 class OpeningBook:
     """开局库管理器，支持 Polyglot 二进制库与内置开源开局库无缝组合"""
 
-    def __init__(self, book_path: Optional[Union[str, Path]] = None):
+    def __init__(self, book_path: Optional[Union[str, Path]] = None, json_path: Optional[Union[str, Path]] = None):
         self.book_path = Path(book_path) if book_path else OPENING_BOOK_PATH
-        self._custom_patterns: Dict[str, Dict[str, Any]] = dict(DEFAULT_OPENING_PATTERNS)
+        self.json_path = Path(json_path) if json_path else DEFAULT_OPENINGS_JSON_PATH
+        self._custom_patterns: Dict[str, Dict[str, Any]] = {}
+        self.reload()
+
+    def reload(self):
+        """加载外置 JSON 开局库，若不存在则回退至内置开源模式"""
+        self._custom_patterns.clear()
+        if self.json_path and self.json_path.exists() and self.json_path.is_file():
+            try:
+                with open(self.json_path, "r", encoding="utf-8") as f:
+                    self._custom_patterns = json.load(f)
+            except Exception:
+                self._custom_patterns = dict(DEFAULT_OPENING_PATTERNS)
+        else:
+            self._custom_patterns = dict(DEFAULT_OPENING_PATTERNS)
 
     def has_polyglot_book(self) -> bool:
         """检测本地是否存在 Polyglot 格式开局库文件"""

@@ -19,6 +19,17 @@ class TestGameModes(unittest.TestCase):
         white, black = manager.player_names()
         self.assertIn("Lv.15", black)
 
+    def test_play_both_sides_and_sides_selection(self):
+        manager = GameModeManager()
+        self.assertEqual(manager.mode, GameMode.LOCAL_PVP)
+        self.assertEqual(MODE_LABELS[GameMode.LOCAL_PVP], "扮演双方棋手 (Play Both Sides)")
+        
+        manager.set_mode(GameMode.VS_ENGINE)
+        manager.player_side = "black"
+        white, black = manager.player_names()
+        self.assertIn("Stockfish", white)
+        self.assertEqual(black, "Player")
+
 
 if __name__ == "__main__":
     unittest.main()

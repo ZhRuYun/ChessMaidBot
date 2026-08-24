@@ -14,12 +14,15 @@ import chess
 from ..agents.base import ChessAgent, AgentRequest
 from ..agents.llm_agent import LLMAgent
 from ..agents.prompt_builder import PromptBuilder
-from ..config import DEFAULT_MAID_PERSONA
+from ..config import DEFAULT_MAID_PERSONA, CONFIG_FILE_PATH
 from ..controller.game_controller import GameController
+from ..controller.game_modes import GameMode
+from ..controller.online_match import EmbeddedOnlineServer, OnlineMatchClient
 from .chess_board import ChessBoardWidget
 from .move_history_panel import MoveHistoryPanel
 from .chat_panel import ChatPanel
 from .control_bar import ControlBar
+import json
 
 
 class LLMWorker(QThread):
@@ -70,12 +73,27 @@ class MainWindow(QMainWindow):
         """)
 
         self.controller = controller or GameController()
+        # 加载持久化配置
+        self._persisted_config = self._load_persisted_settings()
         # 当前生效的人设 Prompt (可被用户通过「人设」按钮运行时修改)
-        self.current_persona = DEFAULT_MAID_PERSONA
-        # 默认使用 LLMAgent (无 API Key 时自动降级为本地描述性回复, 行为同 EchoAgent)
-        self.agent = agent or LLMAgent(persona_prompt=self.current_persona)
+        self.current_persona = self._persisted_config.get("persona") or DEFAULT_MAID_PERSONA
+        # 默认使用 LLMAgent (优先使用持久化配置)
+        llm_cfg = self._persisted_config.get("llm", {})
+        self.agent = agent or LLMAgent(
+            api_base=llm_cfg.get("api_base") or None,
+            api_key=llm_cfg.get("api_key") or None,
+            model=llm_cfg.get("model") or None,
+            reasoning_effort=llm_cfg.get("reasoning_effort") or None,
+            stream=llm_cfg.get("stream", False),
+            persona_prompt=self.current_persona,
+        )
+        if isinstance(self.agent, LLMAgent) and "show_tool_records" in llm_cfg:
+            self.agent.show_tool_records = bool(llm_cfg["show_tool_records"])
+
         self.controller.set_agent(self.agent)
         self._llm_thread: Optional[LLMWorker] = None
+        self._online_server: Optional[EmbeddedOnlineServer] = None
+        self._online_client: Optional[OnlineMatchClient] = None
 
         # 注册 LLM 终局总结回调
         self.controller.set_llm_summary_provider(self._generate_llm_summary)
@@ -196,16 +214,23 @@ class MainWindow(QMainWindow):
         要求2：若总开关开启，玩家每走一步棋，根据棋盘现状信息 (PGN, FEN) 和 4 个子开关启动情况，
         向 LLM 发送定制 prompt 并等待回复 (异步 + loading 转圈动效)
         """
+        if self._online_client and self.controller.modes.mode == GameMode.ONLINE_PVP:
+            # 判断这步是否是自己走的，如果是则同步发送给服务端
+            is_my_move = (was_white and self._online_client.my_side == "white") or (not was_white and self._online_client.my_side == "black")
+            if is_my_move:
+                self._online_client.send_move(uci, self.controller.get_fen())
+
         triggers = self.controller.teaching
         if not triggers.master_enabled:
             return
 
-        # 构建定制 prompt
+        # 构建定制 prompt (带入当前游戏模式)
         snapshot = self.controller.get_snapshot()
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
             triggers=triggers,
             is_auto_move=True,
+            game_mode_name=self.controller.modes.mode.value,
         )
         self._dispatch_llm_request(custom_prompt)
 
@@ -290,8 +315,66 @@ class MainWindow(QMainWindow):
             self, "新对局", "确定要重新开始一局新的对局吗？",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        if reply == QMessageBox.Yes:
-            self.controller.new_game()
+        if reply != QMessageBox.Yes:
+            return
+
+        # 如果是人机或女仆对弈模式，弹出选择执白还是执黑
+        if self.controller.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
+            side_dialog = QMessageBox(self)
+            side_dialog.setWindowTitle("选择执棋方")
+            side_dialog.setText("请选择您在本局中执白棋还是执黑棋：")
+            btn_white = side_dialog.addButton("执白 (先手)", QMessageBox.ActionRole)
+            btn_black = side_dialog.addButton("执黑 (后手)", QMessageBox.ActionRole)
+            side_dialog.exec()
+            chosen_side = "black" if side_dialog.clickedButton() == btn_black else "white"
+            self.controller.set_player_side(chosen_side)
+            if chosen_side == "black" and not self.chess_board.flipped:
+                self.chess_board.flip_board()
+            elif chosen_side == "white" and self.chess_board.flipped:
+                self.chess_board.flip_board()
+
+        elif self.controller.modes.mode == GameMode.ONLINE_PVP:
+            self._handle_online_pvp_setup()
+
+        self.controller.new_game()
+
+    def _handle_online_pvp_setup(self):
+        """网络双人对战连接设置对话框"""
+        choice_box = QMessageBox(self)
+        choice_box.setWindowTitle("网络双人对战")
+        choice_box.setText("请选择作为房主创建房间，还是加入已有房间：")
+        btn_host = choice_box.addButton("创建房间 (Host)", QMessageBox.ActionRole)
+        btn_join = choice_box.addButton("加入房间 (Join)", QMessageBox.ActionRole)
+        choice_box.exec()
+
+        if choice_box.clickedButton() == btn_host:
+            if self._online_server is None:
+                self._online_server = EmbeddedOnlineServer(host="0.0.0.0", port=8765)
+                self._online_server.start()
+            if self._online_client is None:
+                self._online_client = OnlineMatchClient(host="127.0.0.1", port=8765, parent=self)
+                self._online_client.opponent_moved.connect(self._on_online_opponent_move)
+            self._online_client.start(my_side="white")
+            self.controller.set_player_side("white")
+            QMessageBox.information(self, "房间已建立", "已启动本地对战服务 (端口 8765)！您执白方，请通知对手连接。")
+        else:
+            host_ip, ok = QInputDialog.getText(self, "连接房间", "请输入房主 IP 地址 (默认 127.0.0.1):", text="127.0.0.1")
+            if ok and host_ip.strip():
+                if self._online_client is None:
+                    self._online_client = OnlineMatchClient(host=host_ip.strip(), port=8765, parent=self)
+                    self._online_client.opponent_moved.connect(self._on_online_opponent_move)
+                self._online_client.start(my_side="black")
+                self.controller.set_player_side("black")
+                if not self.chess_board.flipped:
+                    self.chess_board.flip_board()
+                QMessageBox.information(self, "已连接", f"已连接至 {host_ip.strip()}:8765！您执黑方。")
+
+    def _on_online_opponent_move(self, uci_move: str):
+        try:
+            move = chess.Move.from_uci(uci_move)
+            self.controller.apply_move(move)
+        except Exception:
+            pass
 
     def on_undo(self):
         if not self.controller.undo():
@@ -362,6 +445,13 @@ class MainWindow(QMainWindow):
                 QWidget { color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
                 QMessageBox { background-color: #ffffff; color: #0f172a; }
                 QMessageBox QPushButton { background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 12px; }
+                QTableWidget { background-color: #ffffff; color: #0f172a; gridline-color: #e2e8f0; border: 1px solid #cbd5e1; }
+                QHeaderView::section { background-color: #f1f5f9; color: #475569; border-bottom: 1px solid #cbd5e1; }
+                QTextBrowser { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
+                QLineEdit { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
+                QComboBox { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
+                QSpinBox { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
+                QPushButton { background-color: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; }
             """)
         elif theme_name == "深色":
             self.setStyleSheet("""
@@ -369,6 +459,10 @@ class MainWindow(QMainWindow):
                 QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
                 QMessageBox { background-color: #1e222d; color: #f1f5f9; }
                 QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QTableWidget { background-color: #0f172a; color: #e2e8f0; gridline-color: #1e293b; border: 1px solid #1e293b; }
+                QHeaderView::section { background-color: #1e293b; color: #94a3b8; border-bottom: 1px solid #334155; }
+                QTextBrowser { background-color: #0b0f19; color: #e2e8f0; border: 1px solid #1e293b; }
+                QLineEdit { background-color: #111827; color: #f8fafc; border: 1px solid #334155; }
             """)
         else: # 跟随系统
             self.setStyleSheet("""
@@ -376,6 +470,10 @@ class MainWindow(QMainWindow):
                 QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
                 QMessageBox { background-color: #1e222d; color: #f1f5f9; }
                 QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QTableWidget { background-color: #0f172a; color: #e2e8f0; gridline-color: #1e293b; border: 1px solid #1e293b; }
+                QHeaderView::section { background-color: #1e293b; color: #94a3b8; border-bottom: 1px solid #334155; }
+                QTextBrowser { background-color: #0b0f19; color: #e2e8f0; border: 1px solid #1e293b; }
+                QLineEdit { background-color: #111827; color: #f8fafc; border: 1px solid #334155; }
             """)
 
     # ---------- AI 女仆连接配置 ----------
@@ -411,8 +509,12 @@ class MainWindow(QMainWindow):
             stream=new_config.get("stream", False),
             persona_prompt=self.current_persona,
         )
+        if "show_tool_records" in new_config:
+            self.agent.show_tool_records = bool(new_config["show_tool_records"])
+
         self.controller.set_agent(self.agent)
         self._sync_llm_connection_status()
+        self._save_persisted_settings()
 
         QMessageBox.information(
             self, "AI 设置已保存",
@@ -428,8 +530,32 @@ class MainWindow(QMainWindow):
                 "model": self.agent.model,
                 "reasoning_effort": self.agent.reasoning_effort,
                 "stream": self.agent.stream,
+                "show_tool_records": getattr(self.agent, "show_tool_records", False),
             }
         return {}
+
+    def _load_persisted_settings(self) -> dict:
+        """从 data/settings.json 加载持久化设置"""
+        if CONFIG_FILE_PATH.exists():
+            try:
+                with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save_persisted_settings(self):
+        """保存持久化设置到 data/settings.json"""
+        data = {
+            "persona": self.current_persona,
+            "llm": self._collect_current_llm_config(),
+        }
+        try:
+            CONFIG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def _sync_llm_connection_status(self):
         """根据当前 agent 的 Key 配置, 同步 chat_panel 状态徽章"""
@@ -481,6 +607,7 @@ class MainWindow(QMainWindow):
             snapshot=snapshot,
             triggers=triggers,
             is_auto_move=False,
+            game_mode_name=self.controller.modes.mode.value,
         )
         self.chat_panel.append_user_message("*(点击了「主动询问女仆指导」)*")
         self._dispatch_llm_request(custom_prompt)

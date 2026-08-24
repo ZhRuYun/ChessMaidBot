@@ -26,14 +26,11 @@ data/
 └── syzygy/     # Syzygy 残局库 (.rtbw / .rtbz)
 ```
 
-### 1.1 自定义开局库 (.bin)
-- **文件格式**：标准 Polyglot `.bin` 格式。
+### 1.1 自定义开局库 (.bin / .json)
+- **文件格式**：标准 Polyglot `.bin` 格式或外置 JSON 开局格式。
 - **配置方式**：
-  将你的开局库文件重命名为 `titans.bin` 并放入 `data/books/` 目录下，或在 `src/config.py` 中修改 `OPENING_BOOK_PATH`：
-  ```python
-  OPENING_BOOK_PATH = BOOKS_DIR / "my_custom_book.bin"
-  ```
-- **降级机制**：若未放入自定义 `.bin` 文件，系统将自动使用内置开源精选开局库（覆盖王兵、后兵、西西里、西班牙等主流开局）。
+  将你的开局库文件放入 `data/books/` 目录下（例如 `titans.bin` 或 `openings.json`）。系统提供了 `python3 scripts/download_assets.py` 一键初始化安装工具。
+- **降级机制**：若未放入自定义 `.bin` 文件，系统将自动使用外置或内置开源精选开局库（覆盖王兵、后兵、西西里、西班牙等主流开局）。
 
 ### 1.2 自定义战术题库 (.epd)
 - **文件格式**：标准 4 字段 EPD 格式（扩展支持 `bm`, `id`, `c0` 等操作码）。
@@ -51,6 +48,13 @@ data/
 ### 1.3 自定义 Syzygy 残局库 (.rtbw / .rtbz)
 - **配置方式**：将下载的 Syzygy 3-4-5-6 子残局文件放入 `data/syzygy/` 目录。
 - **自动挂载**：`EndgameDatabase` 在启动时会自动探测并挂载该目录，提供精准 WDL / DTZ 查询；若不存在则自动降级使用启发式理论残局评估器。
+
+### 1.4 一键下载与环境初始化脚本
+项目根目录提供了自动下载与初始化的 Python 脚本：
+```bash
+python3 scripts/download_assets.py
+```
+该脚本会自动下载适合当前操作系统的 Stockfish 18 二进制引擎，并初始化开局库与 EPD 战术题库。
 
 ---
 

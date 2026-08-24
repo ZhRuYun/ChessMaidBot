@@ -67,6 +67,7 @@ class LLMAgent(ChessAgent):
 
         env_stream = os.environ.get("LLM_STREAM", "false").strip().lower() in ("true", "1", "yes")
         self.stream = stream if stream is not None else env_stream
+        self.show_tool_records = False  # 是否在回复末尾附带简短的工具调用记录 (便于调试)
 
         default_persona = (
             "你是一位精通国际象棋且温柔细致的AI棋艺女仆助理【ChessMaid】。"
@@ -89,16 +90,29 @@ class LLMAgent(ChessAgent):
 
     def reply(self, request: AgentRequest) -> str:
         """根据标准请求包调用 LLM API 并返回 Markdown 回复; API 不可用时回退"""
+        tool_logs: list[str] = []
+        if request.tools:
+            if request.tools.read_database:
+                tool_logs.append("read_database(opening)")
+            if request.tools.read_engine_state:
+                tool_logs.append("read_engine_state(analyse)")
+            if request.tools.web_search:
+                tool_logs.append("web_search")
+
         # 若 API Key 为空, 直接回退
         if not self.api_key:
-            return self._fallback_reply(request)
+            res = self._fallback_reply(request)
+        else:
+            messages = self._build_messages(request)
+            try:
+                raw = self._call_chat_api(messages)
+                res = raw.strip()
+            except Exception:
+                res = self._fallback_reply(request)
 
-        messages = self._build_messages(request)
-        try:
-            raw = self._call_chat_api(messages)
-            return raw.strip()
-        except Exception:
-            return self._fallback_reply(request)
+        if self.show_tool_records and tool_logs:
+            res += f"\n\n*(工具调用记录: {', '.join(tool_logs)})*"
+        return res
 
     # ---------- 消息组装 ----------
 

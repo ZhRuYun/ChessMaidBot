@@ -155,6 +155,11 @@ class LLMConfigDialog(QDialog):
         self.chk_stream = QCheckBox("启用流式响应传输 (Stream)")
         self.chk_stream.setChecked(bool(current.get("stream", False)))
         form.addRow("流式输出 (Stream):", self.chk_stream)
+
+        self.chk_tool_records = QCheckBox("在对话中显示简短工具调用记录 (开发者选项)")
+        self.chk_tool_records.setChecked(bool(current.get("show_tool_records", False)))
+        form.addRow("调试记录:", self.chk_tool_records)
+
         api_layout.addLayout(form)
         api_layout.addStretch()
         self.tabs.addTab(tab_api, "API 连接配置")
@@ -243,6 +248,7 @@ class LLMConfigDialog(QDialog):
             "model": self.model_input.text().strip(),
             "reasoning_effort": self.reasoning_combo.currentData(),
             "stream": self.chk_stream.isChecked(),
+            "show_tool_records": self.chk_tool_records.isChecked(),
         }
 
     def get_triggers(self) -> TeachingTriggers:

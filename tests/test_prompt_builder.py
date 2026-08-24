@@ -28,11 +28,12 @@ class TestPromptBuilder(unittest.TestCase):
             eval_history_moves=True,
             game_over_summary=True,
         )
-        prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers, is_auto_move=True)
+        prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers, is_auto_move=True, game_mode_name="vs_engine")
         self.assertIn("当下局面评估", prompt)
         self.assertIn("建议着法推荐", prompt)
         self.assertIn("历史走法评估", prompt)
         self.assertIn("落子自动教学触发", prompt)
+        self.assertIn("当前游戏模式: vs_engine", prompt)
         self.assertIn("e5", prompt)
         self.assertIn("PGN", prompt)
         self.assertIn("FEN", prompt)

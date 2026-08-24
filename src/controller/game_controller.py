@@ -133,8 +133,9 @@ class GameController(QObject):
             return
         if self.board_state.is_game_over():
             return
-        # 默认人类执白(先手), 对方执黑(后手)
-        if self.board_state.turn == chess.BLACK:
+        # 根据玩家所选执棋颜色判定是否轮到 AI
+        bot_turn = (chess.WHITE if self.modes.player_side == "black" else chess.BLACK)
+        if self.board_state.turn == bot_turn:
             self._start_engine_thinking()
 
     def _start_engine_thinking(self):
@@ -173,7 +174,8 @@ class GameController(QObject):
         self._stop_engine_thread()
 
         is_vs_bot = self.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM)
-        if is_vs_bot and self.board_state.turn == chess.WHITE and len(self.board_state.board.move_stack) >= 2:
+        player_turn = (chess.BLACK if self.modes.player_side == "black" else chess.WHITE)
+        if is_vs_bot and self.board_state.turn == player_turn and len(self.board_state.board.move_stack) >= 2:
             # 撤销对方步与玩家步
             self.board_state.undo_move()
             self.history.pop_move()
@@ -420,6 +422,13 @@ class GameController(QObject):
 
     # ---------- 模式、引擎参数与教学开关 ----------
 
+    def set_player_side(self, side: str):
+        """设置玩家执棋方 ("white" / "black")"""
+        self._stop_engine_thread()
+        self.modes.player_side = side
+        self._apply_mode_headers()
+        self._check_engine_turn()
+
     def set_mode_label(self, label: str) -> GameMode:
         self._stop_engine_thread()
         mode = self.modes.set_mode_by_label(label)
@@ -480,15 +489,37 @@ class GameController(QObject):
                 client.set_skill_level(self.modes.engine_skill)
             return client.get_state(fen=self.board_state.get_fen(), state_type=state_type, **params)
 
+    def _agent_web_search(self, query: str) -> str:
+        """为 LLM 提供的简易轻量联网搜索工具 (采用 Wikipedia / DuckDuckGo Instant 开放 API)"""
+        import urllib.request
+        import urllib.parse
+        import json
+        try:
+            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
+            req = urllib.request.Request(url, headers={"User-Agent": "ChessMaidBot/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                abstract = data.get("AbstractText", "")
+                if abstract:
+                    return f"搜索结果: {abstract}"
+                related = data.get("RelatedTopics", [])
+                if related and isinstance(related[0], dict) and "Text" in related[0]:
+                    return f"搜索结果: {related[0]['Text']}"
+                return f"未检索到关于 '{query}' 的直接摘要信息。"
+        except Exception as e:
+            return f"联网搜索请求失败: {e}"
+
     def build_agent_request(self, user_message: str, persona_prompt: str) -> AgentRequest:
         tools = AgentTools(
             read_database=self._agent_read_database,
             read_engine_state=self._agent_read_engine_state,
+            web_search=self._agent_web_search,
         )
         return AgentRequest(
             user_message=user_message,
             persona_prompt=persona_prompt,
             snapshot=self.get_snapshot(),
             tools=tools,
+            game_mode=self.modes.mode.value,
         )
 

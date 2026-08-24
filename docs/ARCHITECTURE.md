@@ -69,13 +69,13 @@
 ### ✅ 已完成的设计功能
 1. **模块 1: GUI 交互界面**
    - 居中自研矢量高清直绘棋盘（抗锯齿、拖拽/点击、王车易位、升变选择、将军高亮）。
-   - 左侧纯双栏记谱表格（被动响应式整表重建，单一数据源）。
+   - 左侧纯双栏记谱表格（被动响应式整表重建，单一数据源，浅色/深色主题完整适配）。
    - 右侧 LLM 聊天面板（Markdown 气泡渲染、快捷提问条、5 级教学触发器复选框）。
-   - 顶部控制栏（模式下拉切换、Stockfish 目标 Elo 微调、新局、悔棋、翻转、认输、求和、PGN/FEN 导出）。
+   - 顶部控制栏（模式下拉切换、Stockfish 目标 Elo 微调、新局、悔棋、翻转、认输、求和、PGN/FEN 导出、浅色/深色主题）。
 2. **模块 2: Controller 调度中枢层**
    - 棋局状态唯一写入口（`apply_move`, `undo`, `resign`, `offer_draw`, `accept_draw`, `new_game`）。
    - 人机对弈调度机与 `EngineWorker`（`QThread`）后台异步计算线程（维持 UI 响应）。
-   - 对弈模式管理器（本地双人、人机对弈模式切换）。
+   - 对弈模式管理器（扮演双方棋手、人机对弈、女仆陪练与网络双人对战原型，支持执黑/执白自由选边）。
    - 教学触发器总开关与 4 级细分开关状态管理。
 3. **模块 3: 国际象棋规则核心**
    - `BoardState` 规则封装（合法性校验、吃过路兵、被吃子堆栈、防越界回滚）。
@@ -83,24 +83,24 @@
    - PGN / FEN 标准编解码与无损导入导出。
 4. **模块 4: Stockfish 引擎调度**
    - `StockfishClient` 命令行 UCI 通信封装与容错降级。
-   - 通过官方 UCI 选项（`UCI_LimitStrength` + `UCI_Elo`）精确控制目标 Elo（1320 ~ 3190）。
+   - 通过官方 UCI 选项（`UCI_LimitStrength` + `UCI_Elo`）精确控制目标 Elo（500 ~ 3190）。
    - 多 PV（MultiPV）深度着法打分与最佳单步计算。
    - 统一引擎状态查询接口 `get_state`。
 5. **模块 5: Agent 接口与方法库**
-   - 自定义 LLM 人设 Prompt 注入机制。
-   - 标准化上下文请求包 `AgentRequest`（打包 FEN、PGN、行动方、快照与人设）。
-   - 为 LLM 提供 4 大方法库接口 `AgentTools`（是否读库、读库哪部分、是否读引擎状态、读引擎哪部分）。
+   - 自定义 LLM 人设 Prompt 注入机制与持久化保存（`data/settings.json`）。
+   - 标准化上下文请求包 `AgentRequest`（打包 FEN、PGN、行动方、游戏模式、快照与人设）。
+   - 为 LLM 提供方法库接口 `AgentTools`（数据库读取、Stockfish 状态读取、联网搜索工具等）。
 6. **模块 6: 数据库与棋局持久化**
    - 终局以“标准 PGN + LLM 对局总结”复合结构持久化至 `data/games/`。
    - 复合棋谱文件解析方法 `parse_game_file`。
-   - `OpeningBook`：支持 Polyglot (.bin) 二进制开局库与内置开源开局库 (ECO/走法检索)。
-   - `TacticsDatabase`：支持 EPD (.epd) 战术题库标准解析与典型战术模式检索。
+   - `OpeningBook`：支持 Polyglot (.bin) 二进制开局库与外置 JSON 开局库 (`data/books/openings.json`)。
+   - `TacticsDatabase`：支持 EPD (.epd) 战术题库标准解析与典型战术模式检索 (`data/tactics/tactics.epd`)。
    - `EndgameDatabase`：支持 Syzygy (.rtbw/.rtbz) 残局库精准探测与纯规则启发式残局理论评估器。
    - 统一数据库查询接口 `query_database`（提供 history / opening / tactics / endgame 统一分发）。
+   - 配套一键初始化安装脚本 `scripts/download_assets.py`。
 
 ### ⏳ 尚未完成的设计功能（按规划后续迭代）
 1. **推荐走法列表（非核心）**：涉及 LLM 推荐与 Stockfish 引擎推荐冲突时的自由切换按钮（目前已在底层提供 `analyse` 与 `AgentTools` 数据基础）。
-2. **网络双人对弈（非核心）**：网络通信与房间匹配协议。
 
 ---
 

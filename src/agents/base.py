@@ -28,9 +28,11 @@ class AgentTools:
     2. 如果允许读取数据库，读取数据库的哪一部分内容 (如: history, opening, tactics, endgame)
     3. 允许 LLM 自行决定是否读取 Stockfish 引擎状态
     4. 如果允许读取引擎状态，读取哪一部分内容 (如: best_move, eval_multipv)
+    5. 联网搜索工具 (web_search)
     """
     read_database: Optional[Callable[[str, Dict[str, Any]], Any]] = None
     read_engine_state: Optional[Callable[[str, Dict[str, Any]], Any]] = None
+    web_search: Optional[Callable[[str], str]] = None
 
 
 @dataclass
@@ -41,6 +43,7 @@ class AgentRequest:
     snapshot: PositionSnapshot
     dialog_history: List[dict] = field(default_factory=list)
     tools: Optional[AgentTools] = None
+    game_mode: Optional[str] = None
 
 
 class ChessAgent(ABC):

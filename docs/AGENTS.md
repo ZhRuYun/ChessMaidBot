@@ -28,6 +28,7 @@ src/agents/
 |---|---|---|---|
 | **数据库读取** (`read_database`) | `history_store.query_database(category, ...)` | `category="opening"` (开局库查询候选走法及权重)<br>`category="tactics"` (战术库查找匹配战术谜题)<br>`category="endgame"` (Syzygy 残局库查询 WDL/DTZ 极值)<br>`category="history"` (历史对局查询与归档检索) | LLM 可自主决定查询哪个子库，未提供 FEN 时自动注入当前局面 |
 | **引擎状态读取** (`read_engine_state`) | `stockfish_client.get_state(state_type, ...)` | `state_type="best_move"` (获取当前最优着法 UCI)<br>`state_type="analyse"` (多候选线评估、score_cp 分数与 PV 主变例)<br>`state_type="eval"` (即时静态评估值) | Agent 在生成回复或陪练走子时调用，评估深度与线程均受沙箱限制 |
+| **联网搜索工具** (`web_search`) | `game_controller._agent_web_search(query)` | `query="国际象棋 西西里防御 纳道尔夫变例"` | 为 LLM 提供开放 API 检索国际象棋战术理论与知识摘要 |
 
 ---
 
@@ -59,6 +60,7 @@ src/agents/
 请根据以下国际象棋对局信息提供指导：
 
 【棋盘现状】
+- 当前游戏模式: vs_engine (扮演双方棋手 / 人机对弈 / 女仆陪练 / 网络对战)
 - 局势状态: 对弈中 / 已终局 (原因)
 - 当前行动方: 白方 / 黑方
 - 最近一步: e4 / 开局初始

@@ -17,12 +17,14 @@ class GameMode(Enum):
     LOCAL_PVP = "local_pvp"
     VS_ENGINE = "vs_engine"
     VS_MAID_LLM = "vs_maid_llm"
+    ONLINE_PVP = "online_pvp"
 
 
 MODE_LABELS = {
-    GameMode.LOCAL_PVP: "本地双人对战 (Local PvP)",
+    GameMode.LOCAL_PVP: "扮演双方棋手 (Play Both Sides)",
     GameMode.VS_ENGINE: "人机对弈 (vs Stockfish)",
     GameMode.VS_MAID_LLM: "女仆陪练 (vs Maid LLM)",
+    GameMode.ONLINE_PVP: "网络双人对战 (Online PvP)",
 }
 
 STOCKFISH_SKILL_RANGE = (0, 20)
@@ -36,6 +38,7 @@ class GameModeManager:
         self.engine_skill = STOCKFISH_DEFAULT_SKILL
         self.target_elo: Optional[int] = STOCKFISH_DEFAULT_ELO
         self.use_elo: bool = True  # 默认启用目标 Elo 控制
+        self.player_side = "white"  # "white" 或 "black" (在 VS_ENGINE / VS_MAID_LLM / ONLINE_PVP 下适用)
 
     def set_mode(self, mode: GameMode):
         self.mode = mode
@@ -74,8 +77,14 @@ class GameModeManager:
         """按模式返回 (白方, 黑方) 对局头名称"""
         if self.mode == GameMode.VS_ENGINE:
             desc = f"Elo {self.target_elo}" if self.use_elo and self.target_elo else f"Lv.{self.engine_skill}"
+            if self.player_side == "black":
+                return f"Stockfish ({desc})", "Player"
             return "Player", f"Stockfish ({desc})"
         if self.mode == GameMode.VS_MAID_LLM:
+            if self.player_side == "black":
+                return "ChessMaid", "Player"
             return "Player", "ChessMaid"
+        if self.mode == GameMode.ONLINE_PVP:
+            return "Online White", "Online Black"
         return "Player 1", "Player 2"
 
