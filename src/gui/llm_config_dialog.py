@@ -32,71 +32,143 @@ class LLMConfigDialog(QDialog):
         self.setWindowTitle("AI 综合配置")
         self.setMinimumWidth(560)
         self.setMinimumHeight(520)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #0b0f19;
-                color: #f1f5f9;
-            }
-            QLabel {
-                color: #cbd5e1;
-                font-size: 13px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #334155;
-                background-color: #0f172a;
-                border-radius: 6px;
-            }
-            QTabBar::tab {
-                background-color: #1e293b;
-                color: #94a3b8;
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: 600;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #0f172a;
-                color: #38bdf8;
-                border-bottom: 2px solid #38bdf8;
-            }
-            QLineEdit, QPlainTextEdit {
-                background-color: #1e293b;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 13px;
-            }
-            QLineEdit:focus, QPlainTextEdit:focus {
-                border: 1px solid #38bdf8;
-            }
-            QComboBox {
-                background-color: #1e293b;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 13px;
-            }
-            QCheckBox {
-                color: #cbd5e1;
-                font-size: 13px;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 4px;
-                border: 1px solid #475569;
-                background-color: #1e293b;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #38bdf8;
-                border-color: #38bdf8;
-            }
-        """)
+
+        is_light = False
+        if parent and hasattr(parent, "control_bar") and hasattr(parent.control_bar, "theme_combo"):
+            is_light = (parent.control_bar.theme_combo.currentText() == "浅色")
+
+        if is_light:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f8fafc;
+                    color: #0f172a;
+                }
+                QLabel {
+                    color: #334155;
+                    font-size: 13px;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #cbd5e1;
+                    background-color: #ffffff;
+                    border-radius: 6px;
+                }
+                QTabBar::tab {
+                    background-color: #e2e8f0;
+                    color: #475569;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #ffffff;
+                    color: #0284c7;
+                    border-bottom: 2px solid #0284c7;
+                }
+                QLineEdit, QPlainTextEdit {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                }
+                QLineEdit:focus, QPlainTextEdit:focus {
+                    border: 1px solid #0284c7;
+                }
+                QComboBox {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                }
+                QCheckBox {
+                    color: #334155;
+                    font-size: 13px;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 4px;
+                    border: 1px solid #94a3b8;
+                    background-color: #ffffff;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #0284c7;
+                    border-color: #0284c7;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #0b0f19;
+                    color: #f1f5f9;
+                }
+                QLabel {
+                    color: #cbd5e1;
+                    font-size: 13px;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #334155;
+                    background-color: #0f172a;
+                    border-radius: 6px;
+                }
+                QTabBar::tab {
+                    background-color: #1e293b;
+                    color: #94a3b8;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #0f172a;
+                    color: #38bdf8;
+                    border-bottom: 2px solid #38bdf8;
+                }
+                QLineEdit, QPlainTextEdit {
+                    background-color: #1e293b;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                }
+                QLineEdit:focus, QPlainTextEdit:focus {
+                    border: 1px solid #38bdf8;
+                }
+                QComboBox {
+                    background-color: #1e293b;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                }
+                QCheckBox {
+                    color: #cbd5e1;
+                    font-size: 13px;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 4px;
+                    border: 1px solid #475569;
+                    background-color: #1e293b;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #38bdf8;
+                    border-color: #38bdf8;
+                }
+            """)
 
         current_config = current_config or {}
         current_triggers = current_triggers or TeachingTriggers()
@@ -138,6 +210,15 @@ class LLMConfigDialog(QDialog):
         self.model_input = QLineEdit(current.get("model", ""))
         self.model_input.setPlaceholderText("例如: deepseek-chat, gpt-4o")
         form.addRow("模型名称 (Model):", self.model_input)
+
+        self.search_url_input = QLineEdit(current.get("search_api_url", ""))
+        self.search_url_input.setPlaceholderText("可选: https://api.tavily.com/search (留空免key)")
+        form.addRow("搜索接口 (Search URL):", self.search_url_input)
+
+        self.search_key_input = QLineEdit(current.get("search_api_key", ""))
+        self.search_key_input.setEchoMode(QLineEdit.Password)
+        self.search_key_input.setPlaceholderText("可选: Search API Key (留空免key)")
+        form.addRow("搜索密钥 (Search Key):", self.search_key_input)
 
         self.reasoning_combo = QComboBox()
         self.reasoning_combo.addItem("自动 / 默认 (auto)", "auto")
@@ -246,6 +327,8 @@ class LLMConfigDialog(QDialog):
             "api_base": self.base_input.text().strip(),
             "api_key": self.key_input.text().strip(),
             "model": self.model_input.text().strip(),
+            "search_api_url": self.search_url_input.text().strip(),
+            "search_api_key": self.search_key_input.text().strip(),
             "reasoning_effort": self.reasoning_combo.currentData(),
             "stream": self.chk_stream.isChecked(),
             "show_tool_records": self.chk_tool_records.isChecked(),

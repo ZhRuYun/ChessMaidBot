@@ -46,6 +46,24 @@ class UnifiedDatabase:
             endgame_db=self.endgame_db,
         )
 
+    def get_status(self) -> Dict[str, Any]:
+        """获取所有子数据库的就绪与文件状态摘要"""
+        return {
+            "data_dir": str(self.data_dir),
+            "games_count": len(self.history_store.list_games(filter_useless=False)),
+            "useful_games_count": len(self.history_store.list_games(filter_useless=True)),
+            "opening_book": {
+                "has_polyglot": self.opening_book.has_polyglot_book(),
+                "json_entries": len(self.opening_book._openings_cache),
+            },
+            "tactics_db": {
+                "total_puzzles": len(self.tactics_db.puzzles),
+            },
+            "endgame_db": {
+                "has_syzygy": self.endgame_db.has_syzygy(),
+            }
+        }
+
     def query(self, category: str = "history", **kwargs) -> Dict[str, Any]:
         """统一对外查询"""
         return self.history_store.query_database(category=category, **kwargs)

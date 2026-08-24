@@ -60,8 +60,8 @@ class TestPromptBuilder(unittest.TestCase):
             eval_history_moves=False,
             game_over_summary=False,
         )
-        prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers, is_auto_move=False)
-        self.assertIn("通用的棋局状态讲解与战略建议", prompt)
+        prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers)
+        self.assertIn("棋理剖析", prompt)
 
 
 if __name__ == "__main__":

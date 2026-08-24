@@ -205,24 +205,24 @@ class ChessBoardWidget(QWidget):
                     is_castling_rook = True
 
                 if target_piece and not is_castling_rook:
-                    # 吃子圆环
-                    pen = QPen(QColor(0, 0, 0, 70), 6)
+                    # 吃子高亮指示环 (红绿醒目高亮微调)
+                    pen = QPen(QColor(180, 50, 50, 180), 5)
                     painter.setPen(pen)
                     painter.setBrush(Qt.NoBrush)
                     radius = self.square_size // 2 - 4
                     painter.drawEllipse(QPoint(cx, cy), radius, radius)
                 elif is_castling_rook:
                     # 易位车圆环指示
-                    pen = QPen(QColor(46, 117, 182, 160), 6)
+                    pen = QPen(QColor(37, 99, 235, 180), 5)
                     painter.setPen(pen)
                     painter.setBrush(Qt.NoBrush)
                     radius = self.square_size // 2 - 4
                     painter.drawEllipse(QPoint(cx, cy), radius, radius)
                 else:
-                    # 空地落子小实心圆
+                    # 空地落子指示圆点
                     painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(QColor(0, 0, 0, 60)))
-                    painter.drawEllipse(QPoint(cx, cy), 12, 12)
+                    painter.setBrush(QBrush(QColor(40, 120, 40, 90)))
+                    painter.drawEllipse(QPoint(cx, cy), 13, 13)
 
         # 7. 置顶绘制正在拖拽中的棋子 (跟随鼠标中心)
         if self.dragging_square is not None and self.drag_current_pos is not None:

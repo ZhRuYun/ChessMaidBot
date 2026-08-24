@@ -279,3 +279,31 @@ class ControlBar(QWidget):
         self.elo_label.setVisible(is_vs_engine)
         self.elo_preset_combo.setVisible(is_vs_engine)
         self.elo_spin.setVisible(is_vs_engine)
+
+    def apply_theme(self, is_light: bool):
+        """适配浅色/深色主题"""
+        if is_light:
+            self.setStyleSheet("""
+                QComboBox {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }
+                QSpinBox {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                }
+                QPushButton {
+                    background-color: #f1f5f9;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 5px 12px;
+                }
+            """)
+        else:
+            self.setStyleSheet("")

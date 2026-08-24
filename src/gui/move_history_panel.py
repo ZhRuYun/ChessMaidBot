@@ -127,3 +127,54 @@ class MoveHistoryPanel(QWidget):
     def clear(self):
         self.table.setRowCount(0)
 
+    def apply_theme(self, is_light: bool):
+        """适配浅色/深色主题"""
+        if is_light:
+            self.table.setStyleSheet("""
+                QTableWidget {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    gridline-color: #e2e8f0;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QHeaderView::section {
+                    background-color: #f1f5f9;
+                    color: #475569;
+                    font-weight: 600;
+                    border: none;
+                    border-bottom: 1px solid #cbd5e1;
+                    padding: 4px;
+                }
+                QTableWidget::item:selected {
+                    background-color: #bfdbfe;
+                    color: #1e3a8a;
+                    font-weight: 700;
+                }
+            """)
+        else:
+            self.table.setStyleSheet("""
+                QTableWidget {
+                    background-color: #0f172a;
+                    color: #e2e8f0;
+                    gridline-color: #1e293b;
+                    border: 1px solid #1e293b;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QHeaderView::section {
+                    background-color: #1e293b;
+                    color: #94a3b8;
+                    font-weight: 600;
+                    border: none;
+                    border-bottom: 1px solid #334155;
+                    padding: 4px;
+                }
+                QTableWidget::item:selected {
+                    background-color: #2563eb;
+                    color: #ffffff;
+                    font-weight: 700;
+                }
+            """)
+

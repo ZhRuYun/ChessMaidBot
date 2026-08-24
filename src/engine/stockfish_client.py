@@ -120,7 +120,7 @@ class StockfishClient:
         return None
 
     def analyse(self, fen: str, depth: int = 15, multipv: int = 1) -> List[Dict[str, object]]:
-        """固定深度分析, 返回 [{score_cp, pv}] (multipv 支持推荐走法列表)"""
+        """固定深度分析, 返回 [{score_cp, pv}] (支持多PV候选分析)"""
         self.start()
         self._send(f"setoption name MultiPV value {multipv}")
         self._sync()

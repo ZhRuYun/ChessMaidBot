@@ -79,6 +79,8 @@ class MainWindow(QMainWindow):
         self.current_persona = self._persisted_config.get("persona") or DEFAULT_MAID_PERSONA
         # 默认使用 LLMAgent (优先使用持久化配置)
         llm_cfg = self._persisted_config.get("llm", {})
+        self.controller.search_api_url = llm_cfg.get("search_api_url", "")
+        self.controller.search_api_key = llm_cfg.get("search_api_key", "")
         self.agent = agent or LLMAgent(
             api_base=llm_cfg.get("api_base") or None,
             api_key=llm_cfg.get("api_key") or None,
@@ -340,34 +342,45 @@ class MainWindow(QMainWindow):
 
     def _handle_online_pvp_setup(self):
         """网络双人对战连接设置对话框"""
-        choice_box = QMessageBox(self)
-        choice_box.setWindowTitle("网络双人对战")
-        choice_box.setText("请选择作为房主创建房间，还是加入已有房间：")
-        btn_host = choice_box.addButton("创建房间 (Host)", QMessageBox.ActionRole)
-        btn_join = choice_box.addButton("加入房间 (Join)", QMessageBox.ActionRole)
-        choice_box.exec()
+        from .online_match_dialog import OnlineMatchDialog
+        config = OnlineMatchDialog.get_online_config(self)
+        if not config:
+            return
 
-        if choice_box.clickedButton() == btn_host:
-            if self._online_server is None:
-                self._online_server = EmbeddedOnlineServer(host="0.0.0.0", port=8765)
-                self._online_server.start()
-            if self._online_client is None:
-                self._online_client = OnlineMatchClient(host="127.0.0.1", port=8765, parent=self)
-                self._online_client.opponent_moved.connect(self._on_online_opponent_move)
-            self._online_client.start(my_side="white")
-            self.controller.set_player_side("white")
-            QMessageBox.information(self, "房间已建立", "已启动本地对战服务 (端口 8765)！您执白方，请通知对手连接。")
+        is_host = config["is_host"]
+        host = config["host"]
+        port = config["port"]
+        my_side = config["my_side"]
+
+        if is_host:
+            if self._online_server is not None:
+                self._online_server.stop()
+            self._online_server = EmbeddedOnlineServer(host="0.0.0.0", port=port)
+            self._online_server.start()
+
+            if self._online_client is not None:
+                self._online_client.stop()
+            self._online_client = OnlineMatchClient(host="127.0.0.1", port=port, parent=self)
+            self._online_client.opponent_moved.connect(self._on_online_opponent_move)
+            self._online_client.start(my_side=my_side)
+            self.controller.set_player_side(my_side)
+            if my_side == "black" and not self.chess_board.is_flipped:
+                self.chess_board.flip_board()
+            elif my_side == "white" and self.chess_board.is_flipped:
+                self.chess_board.flip_board()
+            QMessageBox.information(self, "房间已建立", f"已成功启动本地对战服务 (端口 {port})！您执{'白方' if my_side=='white' else '黑方'}，请通知对手连接。")
         else:
-            host_ip, ok = QInputDialog.getText(self, "连接房间", "请输入房主 IP 地址 (默认 127.0.0.1):", text="127.0.0.1")
-            if ok and host_ip.strip():
-                if self._online_client is None:
-                    self._online_client = OnlineMatchClient(host=host_ip.strip(), port=8765, parent=self)
-                    self._online_client.opponent_moved.connect(self._on_online_opponent_move)
-                self._online_client.start(my_side="black")
-                self.controller.set_player_side("black")
-                if not self.chess_board.flipped:
-                    self.chess_board.flip_board()
-                QMessageBox.information(self, "已连接", f"已连接至 {host_ip.strip()}:8765！您执黑方。")
+            if self._online_client is not None:
+                self._online_client.stop()
+            self._online_client = OnlineMatchClient(host=host, port=port, parent=self)
+            self._online_client.opponent_moved.connect(self._on_online_opponent_move)
+            self._online_client.start(my_side=my_side)
+            self.controller.set_player_side(my_side)
+            if my_side == "black" and not self.chess_board.is_flipped:
+                self.chess_board.flip_board()
+            elif my_side == "white" and self.chess_board.is_flipped:
+                self.chess_board.flip_board()
+            QMessageBox.information(self, "已连接", f"已连接至房间 {host}:{port}！您执{'白方' if my_side=='white' else '黑方'}。")
 
     def _on_online_opponent_move(self, uci_move: str):
         try:
@@ -439,6 +452,14 @@ class MainWindow(QMainWindow):
     # ---------- 主题变换 ----------
 
     def on_theme_changed(self, theme_name: str):
+        is_light = (theme_name == "浅色")
+        if hasattr(self, "chat_panel"):
+            self.chat_panel.apply_theme(is_light)
+        if hasattr(self, "control_bar"):
+            self.control_bar.apply_theme(is_light)
+        if hasattr(self, "move_history"):
+            self.move_history.apply_theme(is_light)
+
         if theme_name == "浅色":
             self.setStyleSheet("""
                 QMainWindow { background-color: #f8fafc; }
@@ -512,13 +533,18 @@ class MainWindow(QMainWindow):
         if "show_tool_records" in new_config:
             self.agent.show_tool_records = bool(new_config["show_tool_records"])
 
+        self.controller.search_api_url = new_config.get("search_api_url", "")
+        self.controller.search_api_key = new_config.get("search_api_key", "")
+        self._persisted_search_api_url = self.controller.search_api_url
+        self._persisted_search_api_key = self.controller.search_api_key
+
         self.controller.set_agent(self.agent)
         self._sync_llm_connection_status()
         self._save_persisted_settings()
 
         QMessageBox.information(
             self, "AI 设置已保存",
-            "已成功更新 AI 连接配置、教学触发器与人设！"
+            "已成功更新 AI 连接配置、联网搜索接口、教学触发器与人设！"
         )
 
     def _collect_current_llm_config(self) -> dict:
@@ -528,11 +554,16 @@ class MainWindow(QMainWindow):
                 "api_base": self.agent.api_base,
                 "api_key": self.agent.api_key,
                 "model": self.agent.model,
+                "search_api_url": getattr(self.controller, "search_api_url", ""),
+                "search_api_key": getattr(self.controller, "search_api_key", ""),
                 "reasoning_effort": self.agent.reasoning_effort,
                 "stream": self.agent.stream,
                 "show_tool_records": getattr(self.agent, "show_tool_records", False),
             }
-        return {}
+        return {
+            "search_api_url": getattr(self.controller, "search_api_url", ""),
+            "search_api_key": getattr(self.controller, "search_api_key", ""),
+        }
 
     def _load_persisted_settings(self) -> dict:
         """从 data/settings.json 加载持久化设置"""

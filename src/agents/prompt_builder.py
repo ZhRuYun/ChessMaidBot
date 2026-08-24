@@ -26,32 +26,32 @@ class PromptBuilder:
 
         if triggers.eval_current_position:
             sections.append(
-                "1. **当下局面评估**：分析当前双方子力平衡、王的安全度、中心控制及关键格子争夺情况，评估优劣势。"
+                "1. **当下局面评估**：精准剖析子力平衡、兵形结构、王的安全度与关键格控制，明确优劣势对比。"
             )
 
         if triggers.suggest_moves and not snapshot.game_over_reason:
             sections.append(
-                "2. **建议着法推荐**：为当前行动方提供 1~3 步高质量候选着法思路，解释每步的战术意图与后续计划。"
+                "2. **建议着法推荐**：为当前行动方提供 1~3 步高质量候选着法思路，剖析每步棋的战术意图、后续计划与防范要点。"
             )
 
         if triggers.eval_history_moves:
             if snapshot.last_move_san:
                 sections.append(
-                    f"3. **历史走法评估 (失误预警)**：重点点评刚刚下出的 `{snapshot.last_move_san}`，指出是否存在战术漏洞、疑问手或绝妙构思。"
+                    f"3. **历史走法评估 (失误预警)**：重点点评最近一手 `{snapshot.last_move_san}`，指出是否存在战术漏洞、疑问手或亮眼战术构思。"
                 )
             else:
                 sections.append(
-                    "3. **历史走法评估 (失误预警)**：评估历史开局走法是否存在潜在隐患或失误。"
+                    "3. **历史走法评估 (失误预警)**：评估当前开局走法是否符合出子原则与中心争夺。"
                 )
 
         if triggers.game_over_summary and snapshot.game_over_reason:
             sections.append(
-                f"4. **棋局结束总结 (赛后复盘)**：对局已结束（{snapshot.game_over_reason}），请对整盘棋进行全面复盘点评，总结双方关键转折点。"
+                f"4. **棋局结束总结 (赛后复盘)**：对局已终局（{snapshot.game_over_reason}），请进行全面战术复盘，总结胜负手与关键转折局面。"
             )
 
         if not sections:
             # 当所有子开关都未勾选时的兜底通用分析要求
-            sections.append("请结合当前棋盘现状，为主人进行通用的棋局状态讲解与战略建议。")
+            sections.append("请结合当前棋盘局势，为主人提供精辟的棋理剖析与关键战略建议。")
 
         requirements_text = "\n".join(sections)
 
@@ -76,7 +76,7 @@ class PromptBuilder:
 {requirements_text}{note_text}
 
 【输出要求】：
-1. 语言表达请务必精炼短小、直击要害，拒绝冗长套话，控制在 150 字以内。
+1. 语言表达精炼直接、重点突出，字数控制在 150 字左右。
 2. 严禁在回复中输出任何 emoji 符号。
-3. 请以专业、得体、富有启发性的身份，使用整洁美观的 Markdown 格式为主人呈现解答。"""
+3. 请以专业、得体、富有启发性的语气，使用整洁规范的 Markdown 格式为主人呈现解答。"""
         return prompt.strip()

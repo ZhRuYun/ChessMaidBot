@@ -11,9 +11,18 @@ from ..config import PIECES_DIR
 class PromotionDialog(QDialog):
     def __init__(self, color: chess.Color, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("兵的升变选择")
-        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-        self.setStyleSheet("background-color: #2b2b36; color: white;")
+        self.setWindowTitle("兵升变选择")
+        self.color = color
+        self.selected_piece = chess.QUEEN
+
+        is_light = False
+        if parent and hasattr(parent, "control_bar") and hasattr(parent.control_bar, "theme_combo"):
+            is_light = (parent.control_bar.theme_combo.currentText() == "浅色")
+
+        if is_light:
+            self.setStyleSheet("background-color: #f8fafc; color: #0f172a;")
+        else:
+            self.setStyleSheet("background-color: #2b2b36; color: white;")
         self.selected_piece_type = chess.QUEEN
 
         color_prefix = "w" if color == chess.WHITE else "b"

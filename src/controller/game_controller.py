@@ -490,10 +490,42 @@ class GameController(QObject):
             return client.get_state(fen=self.board_state.get_fen(), state_type=state_type, **params)
 
     def _agent_web_search(self, query: str) -> str:
-        """为 LLM 提供的简易轻量联网搜索工具 (采用 Wikipedia / DuckDuckGo Instant 开放 API)"""
+        """为 LLM 提供的轻量联网搜索工具 (支持配置持久化 Search API 接口, 兼容无 key / 默认免 key 模式)"""
         import urllib.request
         import urllib.parse
         import json
+        
+        # 优先读取持久化配置中的自定义 search API 配置
+        api_url = getattr(self, "search_api_url", None)
+        api_key = getattr(self, "search_api_key", None)
+        
+        # 1. 若配置了自定义搜索 API (例如 Tavily / Serper / 自建搜索代理)
+        if api_url and api_url.strip():
+            try:
+                headers = {"User-Agent": "ChessMaidBot/1.0", "Content-Type": "application/json"}
+                if api_key and api_key.strip():
+                    headers["Authorization"] = f"Bearer {api_key.strip()}"
+                    headers["api-key"] = api_key.strip()
+
+                payload = json.dumps({"query": query, "q": query}).encode("utf-8")
+                req = urllib.request.Request(api_url.strip(), data=payload, headers=headers)
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    # 兼容多种格式返回
+                    if isinstance(data, dict):
+                        if "results" in data and isinstance(data["results"], list) and data["results"]:
+                            snippets = [str(r.get("content") or r.get("snippet") or r.get("title", "")) for r in data["results"][:3]]
+                            return f"搜索结果: {' | '.join(filter(bool, snippets))}"
+                        if "abstract" in data:
+                            return f"搜索结果: {data['abstract']}"
+                        if "answer" in data:
+                            return f"搜索结果: {data['answer']}"
+                    return f"搜索结果: {json.dumps(data, ensure_ascii=False)[:300]}"
+            except Exception as e:
+                # 自定义接口出错时自动降级到 DuckDuckGo / Wikipedia 免 key 开放接口
+                pass
+
+        # 2. 默认免 API Key 开放搜索服务 (DuckDuckGo Instant Answer)
         try:
             url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
             req = urllib.request.Request(url, headers={"User-Agent": "ChessMaidBot/1.0"})

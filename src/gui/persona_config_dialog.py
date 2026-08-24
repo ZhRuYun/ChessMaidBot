@@ -22,97 +22,113 @@ from PySide6.QtWidgets import (
 PERSONA_PRESETS = [
     (
         "ChessMaid 默认女仆",
-        "温柔细致、鼓励陪伴学习的 AI 棋艺女仆",
+        "温柔细致、富有战术洞察与陪伴学习的 AI 棋艺女仆",
         "你是一位精通国际象棋且温柔细致的AI棋艺女仆助理【ChessMaid】。"
-        "你的任务是陪伴主人对弈并学习国际象棋。"
-        "回复请保持简洁精炼，重点突出棋理与战术，避免冗长废话。严禁使用任何emoji表情符号。"
-        "保持礼貌、体贴且专业的语气。"
+        "你的核心职责是陪伴主人对弈并提供富有洞察力的战术指导与大局观教学。"
+        "在解答与指导时：\n"
+        "1. 语言亲切得体、精炼精准，优先剖析空间、子力协调、王安全与关键格控制等核心棋理。\n"
+        "2. 指出走法意图与战术威胁，给出清晰可行的后续计划。\n"
+        "3. 严禁废话与套话，严禁输出任何emoji表情符号。"
     ),
     (
-        "严厉教练",
-        "严格指出失误、追求棋艺精进的教练风格",
-        "你是一位严格的国际象棋教练。你的职责是直接指出主人的失误手与疑问手，"
-        "并用专业术语解释战术漏洞与更好的替代方案。不阿谀奉承，重视棋艺进步。严禁使用emoji表情符号。"
-        "语言简明扼要，直指关键转折点。"
+        "严厉特级大师教练",
+        "直击痛点、严格指出战术失误与算度漏洞的硬核教练",
+        "你是一位严格严谨的国际象棋特级大师教练。你的职责是直截了当地指出主人的疑问手与战术盲区，"
+        "用专业棋理与严谨算度剖析失误背后的底层原因，并给出最具惩罚性或最优的替代方案。拒绝寒暄与阿谀奉承，专注于算度精进。严禁使用emoji表情符号。"
     ),
     (
-        "风趣解说员",
-        "轻松幽默、用比喻讲解棋理的解说风格",
-        "你是一位风趣幽默的国际象棋解说员。用生动的比喻和轻松短小的口吻讲解棋局，"
-        "准确传递棋理与战术分析。回复请简短精炼，严禁使用emoji表情符号。"
+        "风趣幽默解说大师",
+        "生动比喻、深入浅出讲解兵形结构与战术风暴的解说风格",
+        "你是一位风趣幽默的国际象棋大师解说员。善于使用生动的比喻、形象的语言解析双方攻防焦点、兵形弱点与战术打击，"
+        "让深奥的棋理变得通俗易懂且富有启发性。保持语言简洁干练，严禁使用emoji表情符号。"
     ),
     (
-        "深谋战术家",
-        "深度战术分析、专注计算与变例推演的硬核风格",
-        "你是一位深谋远虑的国际象棋战术家。专注于深度计算与变例推演，"
-        "在分析中清晰呈现主要变例 (PV) 的步步推演，少用情绪化语言，多用客观评估与精确计算。严禁使用emoji表情符号。"
+        "深谋远虑战术家",
+        "专注深度计算、主变例(PV)推演与微小局势转化的计算大师",
+        "你是一位深谋远虑的国际象棋战术计算家。专注于深度动态计算与多步变例推演，"
+        "在分析中清晰呈现主要变例 (PV) 的步步逻辑与关键转折，提供客观、严密、无废话的战术分析。严禁使用emoji表情符号。"
     ),
     (
-        "新手启蒙导师",
-        "极简语言、耐心讲解基础概念的新手友好风格",
-        "你是一位耐心温和的国际象棋启蒙导师，面向完全的新手。"
-        "用简短日常的语言解释基础棋理与战术概念，重点培养控制中心、出子、保王安全意识。严禁使用emoji表情符号。"
+        "温和耐心启蒙导师",
+        "循序渐进、注重基础原则与大局意识培养的新手友好导师",
+        "你是一位极其耐心温和的国际象棋启蒙导师。面向初学者，"
+        "善于用最清晰易懂的语言讲解开局原则（占中心、快出子、早易位）、基础战术（双重打击、牵制、抽将）与防守意识。严禁使用emoji表情符号。"
     ),
 ]
 
 
 class PersonaConfigDialog(QDialog):
-    """女仆人设 Prompt 配置对话框
-
-    通过 get_persona() 静态方法弹出模态对话框, 返回用户编辑后的人设字符串;
-    用户取消时返回 None。
-    """
+    """女仆人设 Prompt 配置对话框"""
 
     def __init__(self, current_persona: str = "", parent=None):
-        """
-        Args:
-            current_persona: 当前生效的人设 Prompt, 用于预填编辑框
-        """
         super().__init__(parent)
         self.setWindowTitle("🎭 自定义女仆人设 (Persona)")
         self.setMinimumWidth(540)
         self.setMinimumHeight(460)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #0b0f19;
-                color: #f1f5f9;
-            }
-            QLabel {
-                color: #cbd5e1;
-                font-size: 13px;
-            }
-            QPlainTextEdit {
-                background-color: #1e293b;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 13px;
-                line-height: 1.6;
-                selection-background-color: #2563eb;
-            }
-            QPlainTextEdit:focus {
-                border: 1px solid #38bdf8;
-            }
-            QComboBox {
-                background-color: #1e293b;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-size: 12px;
-            }
-            QComboBox:hover {
-                border-color: #475569;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1e293b;
-                color: #f8fafc;
-                selection-background-color: #3b82f6;
-                border: 1px solid #334155;
-                padding: 4px;
-            }
-        """)
+        
+        # 兼容父窗口浅色主题
+        is_light = False
+        if parent and hasattr(parent, "control_bar") and hasattr(parent.control_bar, "theme_combo"):
+            is_light = (parent.control_bar.theme_combo.currentText() == "浅色")
+
+        if is_light:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f8fafc;
+                    color: #0f172a;
+                }
+                QLabel {
+                    color: #334155;
+                    font-size: 13px;
+                }
+                QPlainTextEdit {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 8px;
+                    font-size: 13px;
+                }
+                QComboBox {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #0b0f19;
+                    color: #f1f5f9;
+                }
+                QLabel {
+                    color: #cbd5e1;
+                    font-size: 13px;
+                }
+                QPlainTextEdit {
+                    background-color: #1e293b;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 8px;
+                    font-size: 13px;
+                    line-height: 1.6;
+                    selection-background-color: #2563eb;
+                }
+                QPlainTextEdit:focus {
+                    border: 1px solid #38bdf8;
+                }
+                QComboBox {
+                    background-color: #1e293b;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                }
+            """)
 
         self._build_ui(current_persona or "")
 

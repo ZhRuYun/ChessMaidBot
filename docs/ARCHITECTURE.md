@@ -99,8 +99,8 @@
    - 统一数据库查询接口 `query_database`（提供 history / opening / tactics / endgame 统一分发）。
    - 配套一键初始化安装脚本 `scripts/download_assets.py`。
 
-### ⏳ 尚未完成的设计功能（按规划后续迭代）
-1. **推荐走法列表（非核心）**：涉及 LLM 推荐与 Stockfish 引擎推荐冲突时的自由切换按钮（目前已在底层提供 `analyse` 与 `AgentTools` 数据基础）。
+### 💡 项目功能完成状态
+本系统核心功能（六大模块：GUI三栏交互、调度中枢、规则核心、Stockfish 引擎调度、LLM Agent 接口与方法库、统一数据库与复合棋谱归档、网络双人对战及搜索 API 配置）均已全面实装并稳定通过测试。
 
 ---
 

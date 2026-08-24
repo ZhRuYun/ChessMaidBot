@@ -201,16 +201,76 @@ class ChatPanel(QWidget):
             markdown_text,
             extensions=['fenced_code', 'tables']
         )
+        is_light = getattr(self, "_is_light_theme", False)
+        bg = "#f1f5f9" if is_light else "#1e293b"
+        text_col = "#0f172a" if is_light else "#e2e8f0"
+        border = "#cbd5e1" if is_light else "#334155"
         bubble_html = f"""
         <div style='margin-bottom: 12px; text-align: left;'>
-            <div style='display: inline-block; max-width: 90%; background-color: #1e293b;
-                        color: #e2e8f0; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
+            <div style='display: inline-block; max-width: 90%; background-color: {bg};
+                        color: {text_col}; border: 1px solid {border}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
                         font-size: 13px; line-height: 1.6;'>
-                <span style='color: #38bdf8; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}
+                <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}
             </div>
         </div>
         """
         self.chat_display.append(bubble_html)
+
+    def apply_theme(self, is_light: bool):
+        """动态切换对话面板主题"""
+        self._is_light_theme = is_light
+        if is_light:
+            self.title_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
+            self.chat_display.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 8px;
+                    padding: 10px;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+                    font-size: 13px;
+                }
+            """)
+            self.input_field.setStyleSheet("""
+                QLineEdit {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 7px 12px;
+                    font-size: 13px;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #0284c7;
+                }
+            """)
+        else:
+            self.title_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #f8fafc;")
+            self.chat_display.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #0b0f19;
+                    color: #e2e8f0;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                    padding: 10px;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+                    font-size: 13px;
+                }
+            """)
+            self.input_field.setStyleSheet("""
+                QLineEdit {
+                    background-color: #111827;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 7px 12px;
+                    font-size: 13px;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #38bdf8;
+                }
+            """)
 
     def send_message(self, text: str):
         text = text.strip()
