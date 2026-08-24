@@ -330,9 +330,9 @@ class MainWindow(QMainWindow):
             side_dialog.exec()
             chosen_side = "black" if side_dialog.clickedButton() == btn_black else "white"
             self.controller.set_player_side(chosen_side)
-            if chosen_side == "black" and not self.chess_board.flipped:
+            if chosen_side == "black" and not self.chess_board.is_flipped:
                 self.chess_board.flip_board()
-            elif chosen_side == "white" and self.chess_board.flipped:
+            elif chosen_side == "white" and self.chess_board.is_flipped:
                 self.chess_board.flip_board()
 
         elif self.controller.modes.mode == GameMode.ONLINE_PVP:
