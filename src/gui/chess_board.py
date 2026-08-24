@@ -30,6 +30,7 @@ class ChessBoardWidget(QWidget):
         self.selected_square: Optional[int] = None
         self.legal_destinations: List[int] = []
         self.last_move: Optional[chess.Move] = None
+        self.preview_board: Optional[chess.Board] = None # 用于历史步数预览模式
 
         # 拖拽交互状态
         self.dragging_square: Optional[int] = None
@@ -42,6 +43,17 @@ class ChessBoardWidget(QWidget):
         # 固定棋盘像素大小
         self.setFixedSize(self.square_size * 8, self.square_size * 8)
         self.setMouseTracking(True)
+
+    def set_preview_board(self, board: Optional[chess.Board], last_move: Optional[chess.Move] = None):
+        """设置预览棋盘（用于回看历史局面）"""
+        self.preview_board = board
+        self.last_move = last_move
+        self.selected_square = None
+        self.legal_destinations.clear()
+        self.update()
+
+    def get_current_display_board(self) -> chess.Board:
+        return self.preview_board if self.preview_board is not None else self.board_state.board
 
     def load_piece_pixmaps(self):
         """将 SVG 棋子渲染为高清 Pixmap (双倍采样，极其锐利)"""
@@ -71,11 +83,13 @@ class ChessBoardWidget(QWidget):
 
     def show_move(self, move: Optional[chess.Move]):
         """调度层确认走法后刷新上步高亮并重绘"""
+        self.preview_board = None
         self.last_move = move
         self.update()
 
     def reset_view(self):
         """新对局时清空选中和高亮"""
+        self.preview_board = None
         self.selected_square = None
         self.legal_destinations.clear()
         self.last_move = None
@@ -146,8 +160,9 @@ class ChessBoardWidget(QWidget):
                 painter.fillRect(col * self.square_size, row * self.square_size, self.square_size, self.square_size, hl_color)
 
         # 3. 绘制将军红色警示 (Check alert)
-        if self.board_state.is_check():
-            king_sq = self.board_state.get_king_square(self.board_state.turn)
+        disp_board = self.get_current_display_board()
+        if disp_board.is_check():
+            king_sq = disp_board.king(disp_board.turn)
             if king_sq is not None:
                 col, row = self.square_to_col_row(king_sq)
                 chk_color = QColor(BOARD_THEME["highlight_check"])
@@ -155,7 +170,7 @@ class ChessBoardWidget(QWidget):
                 painter.fillRect(col * self.square_size, row * self.square_size, self.square_size, self.square_size, chk_color)
 
         # 4. 绘制当前选中格子高亮
-        if self.selected_square is not None:
+        if self.selected_square is not None and self.preview_board is None:
             c, r = self.square_to_col_row(self.selected_square)
             sel_color = QColor(BOARD_THEME["highlight_selected"])
             sel_color.setAlpha(160)
@@ -165,7 +180,7 @@ class ChessBoardWidget(QWidget):
         for sq in range(64):
             if sq == self.dragging_square:
                 continue  # 正在拖拽的棋子稍后置顶绘制
-            piece = self.board_state.get_piece_at(sq)
+            piece = disp_board.piece_at(sq)
             if piece:
                 col, row = self.square_to_col_row(sq)
                 color_prefix = "w" if piece.color == chess.WHITE else "b"
@@ -176,7 +191,7 @@ class ChessBoardWidget(QWidget):
                     painter.drawPixmap(target_rect, pix)
 
         # 6. 绘制合法走法提示点与吃子环 (覆盖在棋子或空格上)
-        if self.selected_square is not None:
+        if self.selected_square is not None and self.preview_board is None:
             for dest_sq in self.legal_destinations:
                 dc, dr = self.square_to_col_row(dest_sq)
                 cx = dc * self.square_size + self.square_size // 2
@@ -227,7 +242,17 @@ class ChessBoardWidget(QWidget):
                     painter.drawPixmap(drag_rect, pix)
 
     def mousePressEvent(self, event):
-        if event.button() != Qt.LeftButton or self.board_state.is_game_over():
+        if event.button() != Qt.LeftButton:
+            return
+
+        # 如果处于历史局面预览模式，点击任意位置切回当前实时局面
+        if self.preview_board is not None:
+            self.preview_board = None
+            self.last_move = self.board_state.last_move
+            self.update()
+            return
+
+        if self.board_state.is_game_over():
             return
         sq = self.pos_to_square(self._event_pos(event))
         if sq is None:

@@ -56,6 +56,20 @@ class GameModeManager:
         self.target_elo = max(STOCKFISH_MIN_ELO, min(STOCKFISH_MAX_ELO, elo))
         self.use_elo = True
 
+    def set_elo_preset(self, preset_name: str) -> Optional[int]:
+        presets = {
+            "新手": 500,
+            "业余": 1000,
+            "职业": 1500,
+            "大师": 2000,
+            "特级大师": 2500,
+        }
+        if preset_name in presets:
+            elo = presets[preset_name]
+            self.set_target_elo(elo)
+            return elo
+        return None
+
     def player_names(self):
         """按模式返回 (白方, 黑方) 对局头名称"""
         if self.mode == GameMode.VS_ENGINE:

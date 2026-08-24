@@ -41,8 +41,8 @@ class TestStockfishClient(unittest.TestCase):
         self.assertEqual(self.client.target_elo, 1800)
         self.client.set_elo(4000)
         self.assertEqual(self.client.target_elo, 3190)
-        self.client.set_elo(800)
-        self.assertEqual(self.client.target_elo, 1320)
+        self.client.set_elo(400)
+        self.assertEqual(self.client.target_elo, 500)
 
     def test_get_state_api(self):
         if not self.client.available:

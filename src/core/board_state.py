@@ -235,7 +235,9 @@ class BoardState:
             return False
         if game is None or game.errors:
             return False
-        if not any(game.mainline_moves()):
+        if not any(game.mainline_moves()) and not game.headers:
+            return False
+        if not any(game.mainline_moves()) and pgn_str.strip() and not pgn_str.strip().startswith("["):
             return False
 
         saved_state = (self.board, list(self.move_stack_san), dict(self.captured_pieces), dict(self.custom_headers))

@@ -71,7 +71,7 @@ class LLMAgent(ChessAgent):
         default_persona = (
             "你是一位精通国际象棋且温柔细致的AI棋艺女仆助理【ChessMaid】。"
             "你的任务是陪伴主人对弈并学习国际象棋。"
-            "在主人走棋时，给予鼓励；在遇到关键战术时，用生动易懂的棋理解释背后的战略目的。"
+            "回复请保持简洁精炼，重点突出棋理与战术，避免冗长废话。严禁使用任何emoji表情符号。"
             "保持礼貌、体贴且专业的语气。"
         )
         self.persona_prompt = persona_prompt or default_persona
@@ -140,12 +140,34 @@ class LLMAgent(ChessAgent):
         snap = request.snapshot
         parts.append(self._format_snapshot(snap))
 
-        # 2. 引擎实时评估 (仅当 tools 可用时主动读取, 失败则静默跳过)
+        # 2. 数据库开局/残局/历史走法知识 (可选)
+        db_context = self._fetch_db_context(request)
+        if db_context:
+            parts.append(db_context)
+
+        # 3. 引擎实时评估 (仅当 tools 可用时主动读取, 失败则静默跳过)
         engine_eval = self._fetch_engine_eval(request)
         if engine_eval:
             parts.append(engine_eval)
 
         return "\n\n".join(parts)
+
+    def _fetch_db_context(self, request: AgentRequest) -> str:
+        """通过 AgentTools 读取开局库/战术库/残局知识"""
+        tools = request.tools
+        if tools is None or tools.read_database is None:
+            return ""
+        try:
+            # 尝试查询开局库
+            opening_data = tools.read_database("opening", {"fen": request.snapshot.fen})
+            if opening_data and isinstance(opening_data, dict) and opening_data.get("available"):
+                moves = opening_data.get("moves", [])
+                if moves:
+                    move_strs = [f"{m.get('san', m.get('uci'))} (权重:{m.get('weight', 0)})" for m in moves[:3]]
+                    return f"【开局库推荐候选走法】: {', '.join(move_strs)}"
+        except Exception:
+            pass
+        return ""
 
     @staticmethod
     def _format_snapshot(snap: PositionSnapshot) -> str:
@@ -157,7 +179,7 @@ class LLMAgent(ChessAgent):
             f"- 合法走法数: {snap.legal_move_count}",
         ]
         if snap.in_check:
-            lines.append("- 状态: ⚠️ 当前行动方被将军")
+            lines.append("- 状态: 当前行动方被将军")
         if snap.last_move_san:
             lines.append(f"- 最近一步: {snap.last_move_san}")
         if snap.game_over_reason:
@@ -298,6 +320,57 @@ class LLMAgent(ChessAgent):
         if not base.endswith("/v1"):
             base = f"{base}/v1"
         return f"{base}/chat/completions"
+
+    def get_move(self, request: AgentRequest) -> Optional[str]:
+        """为女仆陪练模式 (VS_MAID_LLM) 计算下一步走法 (返回 UCI 格式字符串如 'e2e4')"""
+        # 构建获取单步走法的专属 prompt
+        fen = request.snapshot.fen
+        prompt = (
+            f"你现在作为国际象棋陪练选手执棋。当前局面 FEN 为: `{fen}`。\n"
+            "请严格以纯文本格式输出一步最佳合法着法（必须为 UCI 格式，如 'e7e5', 'g1f3'，严禁输出任何额外多余文字、标点或解释）。"
+        )
+        move_req = AgentRequest(
+            user_message=prompt,
+            persona_prompt=request.persona_prompt,
+            snapshot=request.snapshot,
+            tools=request.tools,
+        )
+        
+        # 尝试调用 LLM
+        if self.api_key:
+            try:
+                reply = self.reply(move_req)
+                # 提取可能的 UCI 着法
+                import re
+                import chess
+                board = chess.Board(fen)
+                matches = re.findall(r"\b([a-h][1-8][a-h][1-8][qrbn]?)\b", reply.lower())
+                for m in matches:
+                    try:
+                        move = chess.Move.from_uci(m)
+                        if move in board.legal_moves:
+                            return m
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # 若 LLM 无 key 或解析失败，降级使用开局库或引擎/合法走法
+        if request.tools and request.tools.read_engine_state:
+            try:
+                state = request.tools.read_engine_state("best_move", {"movetime_ms": 300})
+                if state and state.get("best_move"):
+                    return state["best_move"]
+            except Exception:
+                pass
+
+        # 随机合法着法兜底
+        import chess, random
+        board = chess.Board(fen)
+        legal_moves = list(board.legal_moves)
+        if legal_moves:
+            return random.choice(legal_moves).uci()
+        return None
 
     # ---------- 回退逻辑 ----------
 

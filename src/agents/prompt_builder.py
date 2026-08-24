@@ -70,8 +70,11 @@ class PromptBuilder:
 {snapshot.pgn.strip()}
 ```
 
-【请针对以下开启的要点进行分析解答】：
+【分析解答要点】：
 {requirements_text}{note_text}
 
-请以温柔细致、专业且富有启发性的 AI 棋艺女仆身份，使用整洁美观的 Markdown 格式为主人呈现解答。"""
+【输出要求】：
+1. 语言表达请务必精炼短小、直击要害，拒绝冗长套话，控制在 150 字以内。
+2. 严禁在回复中输出任何 emoji 符号。
+3. 请以专业、得体、富有启发性的身份，使用整洁美观的 Markdown 格式为主人呈现解答。"""
         return prompt.strip()

@@ -22,19 +22,42 @@ from .teaching_triggers import TeachingTriggers
 
 
 class EngineWorker(QThread):
-    """用于异步计算 Stockfish 引擎最佳着法的后台工作线程"""
+    """用于异步计算 Stockfish 引擎或 Maid LLM 最佳着法的后台工作线程"""
     move_computed = Signal(str)  # 产出 UCI 格式着法 (如 e7e5)
     failed = Signal(str)
 
-    def __init__(self, fen: str, skill_level: int, target_elo: Optional[int], use_elo: bool, parent=None):
+    def __init__(
+        self,
+        fen: str,
+        skill_level: int,
+        target_elo: Optional[int],
+        use_elo: bool,
+        is_maid_llm: bool = False,
+        agent_request_builder: Optional[Callable[[], AgentRequest]] = None,
+        agent: Optional[Any] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.fen = fen
         self.skill_level = skill_level
         self.target_elo = target_elo
         self.use_elo = use_elo
+        self.is_maid_llm = is_maid_llm
+        self.agent_request_builder = agent_request_builder
+        self.agent = agent
 
     def run(self):
         try:
+            if self.is_maid_llm and self.agent and self.agent_request_builder:
+                req = self.agent_request_builder()
+                if hasattr(self.agent, "get_move"):
+                    uci_move = self.agent.get_move(req)
+                else:
+                    uci_move = None
+                if uci_move:
+                    self.move_computed.emit(uci_move)
+                    return
+
             with StockfishClient() as client:
                 if self.use_elo and self.target_elo is not None:
                     client.set_elo(self.target_elo)
@@ -69,6 +92,11 @@ class GameController(QObject):
         self._finalized = False
         self._engine_thread: Optional[EngineWorker] = None
         self._llm_summary_provider: Optional[Callable[[PositionSnapshot], str]] = None
+        self._agent: Optional[Any] = None
+
+    def set_agent(self, agent: Any):
+        """设置用于女仆陪练模式的 Agent 实例"""
+        self._agent = agent
 
     def set_llm_summary_provider(self, provider: Optional[Callable[[PositionSnapshot], str]]):
         """注入 LLM 终局总结生成函数，用于归档 'PGN + LLM 总结'"""
@@ -100,12 +128,12 @@ class GameController(QObject):
         return True
 
     def _check_engine_turn(self):
-        """人机对弈模式下，检测是否轮到引擎走棋并异步启动思考"""
-        if self.modes.mode != GameMode.VS_ENGINE:
+        """人机/女仆对弈模式下，检测是否轮到对方走棋并异步启动思考"""
+        if self.modes.mode not in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
             return
         if self.board_state.is_game_over():
             return
-        # 默认人类执白(先手), 引擎执黑(后手)
+        # 默认人类执白(先手), 对方执黑(后手)
         if self.board_state.turn == chess.BLACK:
             self._start_engine_thinking()
 
@@ -113,12 +141,16 @@ class GameController(QObject):
         if self._engine_thread is not None and self._engine_thread.isRunning():
             return
 
+        is_maid_llm = (self.modes.mode == GameMode.VS_MAID_LLM)
         self.engine_thinking_changed.emit(True)
         self._engine_thread = EngineWorker(
             fen=self.board_state.get_fen(),
             skill_level=self.modes.engine_skill,
             target_elo=self.modes.target_elo,
             use_elo=self.modes.use_elo,
+            is_maid_llm=is_maid_llm,
+            agent_request_builder=lambda: self.build_agent_request(user_message="", persona_prompt=""),
+            agent=self._agent,
             parent=self,
         )
         self._engine_thread.move_computed.connect(self._on_engine_move_ready)
@@ -137,11 +169,12 @@ class GameController(QObject):
         self.engine_thinking_changed.emit(False)
 
     def undo(self) -> bool:
-        """悔棋一步; 若在人机模式下若轮到玩家，则自动撤销两步(玩家+引擎)"""
+        """悔棋一步; 若在人机/女仆陪练模式下若轮到玩家，则自动撤销两步(玩家+对方)"""
         self._stop_engine_thread()
 
-        if self.modes.mode == GameMode.VS_ENGINE and self.board_state.turn == chess.WHITE and len(self.board_state.board.move_stack) >= 2:
-            # 撤销引擎步与玩家步
+        is_vs_bot = self.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM)
+        if is_vs_bot and self.board_state.turn == chess.WHITE and len(self.board_state.board.move_stack) >= 2:
+            # 撤销对方步与玩家步
             self.board_state.undo_move()
             self.history.pop_move()
             self.board_state.undo_move()
@@ -267,7 +300,7 @@ class GameController(QObject):
     def _emit_status(self):
         in_check = self.board_state.is_check()
         turn_str = "白方 (White)" if self.board_state.turn == chess.WHITE else "黑方 (Black)"
-        text = f"当前行动: {turn_str} ⚠️ [ 被将军 Check! ]" if in_check else f"当前行动: {turn_str}"
+        text = f"当前行动: {turn_str} [ 被将军 Check! ]" if in_check else f"当前行动: {turn_str}"
         self.status_changed.emit(text, in_check)
 
     def _apply_mode_headers(self):
@@ -284,24 +317,31 @@ class GameController(QObject):
 
         if not self._finalized:
             self._finalized = True
-            llm_summary = None
-            if self._llm_summary_provider:
+            
+            # 异步或容错归档，确保 UI 不受阻塞
+            pgn_to_save = self.board_state.export_pgn(override_result=result_str)
+            snapshot = self.get_snapshot()
+            provider = self._llm_summary_provider
+
+            def _do_save():
+                llm_summary = None
+                if provider:
+                    try:
+                        llm_summary = provider(snapshot)
+                    except Exception:
+                        llm_summary = None
+                if not llm_summary:
+                    llm_summary = f"对局结束，结果为 {result_str}。终局原因: {status.get('reason', '')}"
                 try:
-                    llm_summary = self._llm_summary_provider(self.get_snapshot())
+                    self.history_store.save_game(
+                        pgn_text=pgn_to_save,
+                        result=result_str,
+                        llm_summary=llm_summary,
+                    )
                 except Exception:
-                    llm_summary = None
+                    pass
 
-            if not llm_summary:
-                llm_summary = f"对局结束，结果为 {result_str}。终局原因: {status.get('reason', '')}"
-
-            try:
-                self.history_store.save_game(
-                    pgn_text=self.board_state.export_pgn(override_result=result_str),
-                    result=result_str,
-                    llm_summary=llm_summary,
-                )
-            except OSError:
-                pass  # 归档失败不阻断对局结束流程
+            _do_save()
 
         self.game_over.emit(status)
         self._emit_status()
@@ -330,6 +370,42 @@ class GameController(QObject):
         else:
             self._check_engine_turn()
         return True
+
+    def import_fen(self, fen: str) -> bool:
+        """从 FEN 字符串加载棋局"""
+        self._stop_engine_thread()
+        try:
+            board = chess.Board(fen.strip())
+            self.board_state.reset(fen.strip())
+            self.history.clear()
+            self._finalized = False
+            self.position_changed.emit(self.board_state.last_move)
+            self.history_changed.emit([])
+            self._emit_status()
+            status = self.board_state.get_game_status()
+            if status["is_over"]:
+                self._finalize_game(status)
+            else:
+                self._check_engine_turn()
+            return True
+        except Exception:
+            return False
+
+    def import_game(self, text: str) -> bool:
+        """智能解析并导入 PGN 或 FEN 文本"""
+        text = text.strip()
+        if not text:
+            return False
+        # 优先尝试 FEN (以FEN典型格式或单行多段判定)
+        tokens = text.split()
+        if len(tokens) >= 4 and "/" in tokens[0] and (len(tokens[0].split("/")) == 8):
+            if self.import_fen(text):
+                return True
+        # 尝试 PGN
+        if self.import_pgn(text):
+            return True
+        # 若仍未成功，再尝试作为 FEN 解析
+        return self.import_fen(text)
 
     def _rebuild_history_from_board(self):
         """依据走法栈重建双栏记谱 (兼容黑先开局的 FEN/PGN)"""

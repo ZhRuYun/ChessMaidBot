@@ -6,9 +6,9 @@
 from typing import Optional
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLabel, QMessageBox, QApplication
+    QLabel, QMessageBox, QApplication, QInputDialog
 )
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, Qt
 import chess
 
 from ..agents.base import ChessAgent, AgentRequest
@@ -70,10 +70,11 @@ class MainWindow(QMainWindow):
         """)
 
         self.controller = controller or GameController()
-        # 当前生效的人设 Prompt (可被用户通过「🎭 人设」按钮运行时修改)
+        # 当前生效的人设 Prompt (可被用户通过「人设」按钮运行时修改)
         self.current_persona = DEFAULT_MAID_PERSONA
         # 默认使用 LLMAgent (无 API Key 时自动降级为本地描述性回复, 行为同 EchoAgent)
         self.agent = agent or LLMAgent(persona_prompt=self.current_persona)
+        self.controller.set_agent(self.agent)
         self._llm_thread: Optional[LLMWorker] = None
 
         # 注册 LLM 终局总结回调
@@ -92,18 +93,19 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(16, 14, 16, 14)
         main_layout.setSpacing(12)
 
-        # 1. 顶部控制栏 (现代极简暗黑风格)
+        # 1. 顶部控制栏 (现代极简风格)
         self.control_bar = ControlBar(self)
         self.control_bar.new_game_requested.connect(self.on_new_game)
         self.control_bar.undo_requested.connect(self.on_undo)
         self.control_bar.flip_requested.connect(self.on_flip)
         self.control_bar.resign_requested.connect(self.on_resign)
         self.control_bar.draw_requested.connect(self.on_draw)
+        self.control_bar.import_state_requested.connect(self.on_import_game_state)
         self.control_bar.export_state_requested.connect(self.on_export_game_state)
         self.control_bar.llm_config_requested.connect(self.on_open_llm_config)
-        self.control_bar.persona_config_requested.connect(self.on_open_persona_config)
         self.control_bar.mode_changed.connect(self.controller.set_mode_label)
         self.control_bar.elo_changed.connect(self.controller.set_engine_elo)
+        self.control_bar.theme_changed.connect(self.on_theme_changed)
         main_layout.addWidget(self.control_bar)
 
         # 2. 中间核心区：左侧记谱表 + 中央棋盘 + 右侧LLM对话 (三栏现代极简布局)
@@ -112,25 +114,32 @@ class MainWindow(QMainWindow):
 
         # [左侧]：走法历史双栏记谱表
         history_container = QVBoxLayout()
-        history_title = QLabel("📜 走法记谱 (Moves)")
+        history_title = QLabel("走法记谱 (Moves)")
         history_title.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 13px; padding-bottom: 2px;")
         history_container.addWidget(history_title)
 
         self.history_panel = MoveHistoryPanel(self)
         self.history_panel.setFixedWidth(240)
+        self.history_panel.nav_first_requested.connect(self.on_nav_first)
+        self.history_panel.nav_prev_requested.connect(self.on_nav_prev)
+        self.history_panel.nav_next_requested.connect(self.on_nav_next)
+        self.history_panel.nav_last_requested.connect(self.on_nav_last)
+        self.history_panel.move_selected.connect(self.on_history_move_selected)
         history_container.addWidget(self.history_panel)
         content_layout.addLayout(history_container)
 
         # [中央]：棋盘区域 + 行动与将军状态指示
         board_container = QVBoxLayout()
+        board_container.setAlignment(Qt.AlignCenter)
         self.status_bar_label = QLabel("当前行动: 白方 (White)")
+        self.status_bar_label.setAlignment(Qt.AlignCenter)
         self.status_bar_label.setStyleSheet("color: #38bdf8; font-size: 14px; font-weight: 700; padding: 4px;")
         board_container.addWidget(self.status_bar_label)
 
         self.chess_board = ChessBoardWidget(self.controller.board_state, self)
         self.chess_board.move_ready.connect(self.controller.apply_move)
-        board_container.addWidget(self.chess_board)
-        content_layout.addLayout(board_container)
+        board_container.addWidget(self.chess_board, alignment=Qt.AlignCenter)
+        content_layout.addLayout(board_container, stretch=1)
 
         # [右侧]：LLM 女仆互动对话窗口
         self.chat_panel = ChatPanel(self.controller.teaching, self)
@@ -176,7 +185,7 @@ class MainWindow(QMainWindow):
 
     def on_engine_thinking(self, thinking: bool):
         if thinking:
-            self.status_bar_label.setText("🤖 Stockfish 深度思考中...")
+            self.status_bar_label.setText("Stockfish / AI 思考中...")
             self.status_bar_label.setStyleSheet("color: #fbbf24; font-size: 14px; font-weight: 700; padding: 4px;")
             self.chess_board.setEnabled(False)
         else:
@@ -198,21 +207,81 @@ class MainWindow(QMainWindow):
             triggers=triggers,
             is_auto_move=True,
         )
-
-        side_cn = "白方" if was_white else "黑方"
-        self.chat_panel.append_user_message(f"*(落子: {side_cn} `{san}` - 触发教学分析)*")
         self._dispatch_llm_request(custom_prompt)
 
     def on_game_over(self, status: dict):
-        reason = status.get("reason", "对局结束")
-        result = status.get("result", "")
-        triggers = self.controller.teaching
-        if triggers.master_enabled and triggers.game_over_summary:
-            self.chat_panel.append_maid_message(f"🏁 **对局结束！**<br>结果: `{result}` - {reason}")
+        result = status.get("result", "*")
+        reason = status.get("reason", "")
+        self.chat_panel.append_maid_message(f"**对局结束！**<br>结果: `{result}` - {reason}")
         QMessageBox.information(self, "对局结束", f"结果: {result}\n原因: {reason}")
 
     def on_game_reset(self):
         self.chess_board.reset_view()
+
+    # ---------- 走法导航动作 (Lichess 风格) ----------
+
+    def _get_history_boards_and_moves(self):
+        """重演走法栈生成每一步的 (Board, Move) 序列"""
+        boards = []
+        moves = []
+        replay = self.controller.board_state.board.copy()
+        while replay.move_stack:
+            replay.pop()
+        
+        boards.append(replay.copy())
+        moves.append(None)
+
+        for move in self.controller.board_state.board.move_stack:
+            replay.push(move)
+            boards.append(replay.copy())
+            moves.append(move)
+        return boards, moves
+
+    def _get_current_preview_index(self, boards) -> int:
+        if self.chess_board.preview_board is None:
+            return len(boards) - 1
+        cur_fen = self.chess_board.preview_board.fen()
+        for idx, b in enumerate(boards):
+            if b.fen() == cur_fen:
+                return idx
+        return len(boards) - 1
+
+    def on_nav_first(self):
+        boards, moves = self._get_history_boards_and_moves()
+        if boards:
+            self.chess_board.set_preview_board(boards[0], moves[0])
+
+    def on_nav_last(self):
+        self.chess_board.set_preview_board(None, self.controller.board_state.last_move)
+
+    def on_nav_prev(self):
+        boards, moves = self._get_history_boards_and_moves()
+        if not boards:
+            return
+        idx = self._get_current_preview_index(boards)
+        if idx > 0:
+            self.chess_board.set_preview_board(boards[idx - 1], moves[idx - 1])
+
+    def on_nav_next(self):
+        boards, moves = self._get_history_boards_and_moves()
+        if not boards:
+            return
+        idx = self._get_current_preview_index(boards)
+        if idx < len(boards) - 1:
+            if idx + 1 == len(boards) - 1:
+                self.on_nav_last()
+            else:
+                self.chess_board.set_preview_board(boards[idx + 1], moves[idx + 1])
+
+    def on_history_move_selected(self, row: int, col: int):
+        boards, moves = self._get_history_boards_and_moves()
+        # row: 0-indexed; col: 1 for white, 2 for black
+        step_idx = row * 2 + (1 if col == 1 else 2)
+        if 0 <= step_idx < len(boards):
+            if step_idx == len(boards) - 1:
+                self.on_nav_last()
+            else:
+                self.chess_board.set_preview_board(boards[step_idx], moves[step_idx])
 
     # ---------- 控制栏动作 ----------
 
@@ -255,6 +324,19 @@ class MainWindow(QMainWindow):
         elif not res.get("accepted"):
             QMessageBox.information(self, "求和结果", res.get("reason", "求和未成功。"))
 
+    def on_import_game_state(self):
+        """根据 PGN/FEN 导入棋局"""
+        text, ok = QInputDialog.getMultiLineText(
+            self, "导入棋局 (PGN / FEN)", "请粘贴完整的 PGN 文本或 FEN 字符串:"
+        )
+        if ok and text.strip():
+            success = self.controller.import_game(text.strip())
+            if success:
+                self.chess_board.reset_view()
+                QMessageBox.information(self, "导入成功", "棋局已成功加载！")
+            else:
+                QMessageBox.warning(self, "导入失败", "未能解析给定的 PGN 或 FEN 文本，请检查格式是否正确。")
+
     def on_export_game_state(self):
         """
         要求6：一键将 PGN + FEN 码导出到系统剪贴板中
@@ -271,20 +353,56 @@ class MainWindow(QMainWindow):
             "已一键将【PGN + FEN】完整棋局状态复制到系统剪切板！\n可直接粘贴使用。"
         )
 
+    # ---------- 主题变换 ----------
+
+    def on_theme_changed(self, theme_name: str):
+        if theme_name == "浅色":
+            self.setStyleSheet("""
+                QMainWindow { background-color: #f8fafc; }
+                QWidget { color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+                QMessageBox { background-color: #ffffff; color: #0f172a; }
+                QMessageBox QPushButton { background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 12px; }
+            """)
+        elif theme_name == "深色":
+            self.setStyleSheet("""
+                QMainWindow { background-color: #0b0f19; }
+                QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+                QMessageBox { background-color: #1e222d; color: #f1f5f9; }
+                QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+            """)
+        else: # 跟随系统
+            self.setStyleSheet("""
+                QMainWindow { background-color: #0b0f19; }
+                QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+                QMessageBox { background-color: #1e222d; color: #f1f5f9; }
+                QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+            """)
+
     # ---------- AI 女仆连接配置 ----------
 
     def on_open_llm_config(self):
-        """打开 LLM 配置对话框, 应用后重建 LLMAgent 并更新状态徽章"""
-        # 收集当前 agent 配置用于预填表单
+        """打开综合 AI 配置对话框"""
         current_config = self._collect_current_llm_config()
         from .llm_config_dialog import LLMConfigDialog
-        new_config = LLMConfigDialog.get_config_dialog(
-            current_config=current_config, parent=self
+        res = LLMConfigDialog.get_config_dialog(
+            current_config=current_config,
+            current_triggers=self.controller.teaching,
+            current_persona=self.current_persona,
+            parent=self,
         )
-        if new_config is None:
+        if res is None:
             return  # 用户取消
 
-        # 重建 LLMAgent (保留当前人设, 应用新配置)
+        new_config = res.get("config", {})
+        new_triggers = res.get("triggers")
+        new_persona = res.get("persona")
+
+        if new_triggers:
+            self.controller.set_teaching(new_triggers)
+        if new_persona:
+            self.current_persona = new_persona
+
+        # 重建 LLMAgent
         self.agent = LLMAgent(
             api_base=new_config.get("api_base") or None,
             api_key=new_config.get("api_key") or None,
@@ -293,22 +411,13 @@ class MainWindow(QMainWindow):
             stream=new_config.get("stream", False),
             persona_prompt=self.current_persona,
         )
+        self.controller.set_agent(self.agent)
         self._sync_llm_connection_status()
 
-        # 友好的反馈提示
-        if self.agent.api_key:
-            QMessageBox.information(
-                self, "AI 女仆已连接",
-                f"已成功配置 AI 女仆连接！\n\n模型: {self.agent.model}\n基地址: {self.agent.api_base}\n"
-                f"思考档位: {self.agent.reasoning_effort}\n流式输出: {'开启' if self.agent.stream else '关闭'}\n\n"
-                f"现在 ChessMaid 将使用真实大语言模型进行棋艺教学。"
-            )
-        else:
-            QMessageBox.information(
-                self, "已切换为本地降级模式",
-                "未填写 API Key, ChessMaid 将使用本地降级回复。\n\n"
-                "如需接入真实 AI, 请点击「⚙️ AI 设置」填入 API Key。"
-            )
+        QMessageBox.information(
+            self, "AI 设置已保存",
+            "已成功更新 AI 连接配置、教学触发器与人设！"
+        )
 
     def _collect_current_llm_config(self) -> dict:
         """从当前 agent 收集配置, 用于预填配置对话框"""

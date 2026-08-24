@@ -19,9 +19,10 @@ class ControlBar(QWidget):
     draw_requested = Signal()
     mode_changed = Signal(str)
     elo_changed = Signal(int)
+    import_state_requested = Signal()   # 导入 PGN/FEN
     export_state_requested = Signal()
-    llm_config_requested = Signal()   # 打开 AI 女仆连接配置对话框
-    persona_config_requested = Signal()  # 打开人设 Prompt 自定义对话框
+    llm_config_requested = Signal()   # 打开 AI 设置对话框 (含教学触发器与人设)
+    theme_changed = Signal(str)       # 主题切换 ("跟随系统", "浅色", "深色")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,9 +64,34 @@ class ControlBar(QWidget):
         """)
         self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
 
-        # 2. Stockfish 目标 Elo 设定微调框
-        self.elo_label = QLabel("Elo:")
+        # 2. Stockfish Elo 档位预设与微调
+        self.elo_label = QLabel("难度:")
         self.elo_label.setStyleSheet("color: #fbbf24; font-weight: 600; font-size: 13px;")
+        
+        self.elo_preset_combo = QComboBox(self)
+        self.elo_preset_combo.addItems(["新手 (500)", "业余 (1000)", "职业 (1500)", "大师 (2000)", "特级大师 (2500)", "自定义"])
+        self.elo_preset_combo.setCurrentIndex(2) # 默认职业 1500
+        self.elo_preset_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #1e222d;
+                color: #fbbf24;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox:hover { border-color: #475569; }
+            QComboBox::drop-down { border: none; width: 18px; }
+            QComboBox QAbstractItemView {
+                background-color: #1e222d;
+                color: #fbbf24;
+                selection-background-color: #3b82f6;
+                border: 1px solid #334155;
+            }
+        """)
+        self.elo_preset_combo.currentTextChanged.connect(self._on_elo_preset_changed)
+
         self.elo_spin = QSpinBox(self)
         self.elo_spin.setRange(STOCKFISH_MIN_ELO, STOCKFISH_MAX_ELO)
         self.elo_spin.setSingleStep(50)
@@ -92,20 +118,26 @@ class ControlBar(QWidget):
         sep1.setStyleSheet("color: #334155;")
 
         # 3. 对局控制按钮组 (极简现代扁平风格)
-        self.btn_new_game = QPushButton("🆕 新局")
-        self.btn_undo = QPushButton("↩️ 悔棋")
-        self.btn_flip = QPushButton("🔄 翻转")
-        self.btn_draw = QPushButton("🤝 求和")
-        self.btn_resign = QPushButton("🏳️ 认输")
+        self.btn_new_game = QPushButton("新局")
+        self.btn_undo = QPushButton("悔棋")
+        self.btn_flip = QPushButton("翻转")
+        self.btn_draw = QPushButton("求和")
+        self.btn_resign = QPushButton("认输")
 
-        # 导出棋局状态按钮 (一键导出 PGN + FEN 到剪切板)
-        self.btn_export_state = QPushButton("📋 导出棋局状态 (PGN+FEN)")
+        # 导入/导出棋局状态按钮
+        self.btn_import_state = QPushButton("导入 (PGN/FEN)")
+        self.btn_export_state = QPushButton("导出 (PGN+FEN)")
 
-        # AI 女仆连接配置按钮 (让用户在界面填入 API Key)
-        self.btn_llm_config = QPushButton("⚙️ AI 设置")
+        # AI 设置按钮
+        self.btn_llm_config = QPushButton("AI 设置")
 
-        # 人设 Prompt 自定义按钮 (让用户自定义 AI 女仆的人设)
-        self.btn_persona_config = QPushButton("🎭 人设")
+        # 主题切换下拉框
+        theme_label = QLabel("主题:")
+        theme_label.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
+        self.theme_combo = QComboBox(self)
+        self.theme_combo.addItems(["跟随系统", "浅色", "深色"])
+        self.theme_combo.setStyleSheet(self.mode_combo.styleSheet())
+        self.theme_combo.currentTextChanged.connect(self.theme_changed.emit)
 
         standard_buttons = [
             self.btn_new_game, self.btn_undo, self.btn_flip, self.btn_draw
@@ -152,13 +184,13 @@ class ControlBar(QWidget):
             }
         """)
 
-        self.btn_export_state.setStyleSheet("""
+        btn_action_style = """
             QPushButton {
                 background-color: #1e293b;
                 color: #38bdf8;
                 border: 1px solid #0284c7;
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 6px 12px;
                 font-size: 12px;
                 font-weight: 600;
             }
@@ -170,9 +202,11 @@ class ControlBar(QWidget):
             QPushButton:pressed {
                 background-color: #075985;
             }
-        """)
+        """
+        self.btn_import_state.setStyleSheet(btn_action_style)
+        self.btn_export_state.setStyleSheet(btn_action_style)
 
-        # AI 设置按钮样式 (紫色强调, 区别于其他功能)
+        # AI 设置按钮样式
         self.btn_llm_config.setStyleSheet("""
             QPushButton {
                 background-color: #1e293b;
@@ -193,39 +227,19 @@ class ControlBar(QWidget):
             }
         """)
 
-        # 人设按钮样式 (粉紫强调, 表达人格/性格意味)
-        self.btn_persona_config.setStyleSheet("""
-            QPushButton {
-                background-color: #1e293b;
-                color: #f472b6;
-                border: 1px solid #be185d;
-                border-radius: 6px;
-                padding: 6px 14px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #be185d;
-                color: #ffffff;
-                border-color: #f472b6;
-            }
-            QPushButton:pressed {
-                background-color: #9d174d;
-            }
-        """)
-
         self.btn_new_game.clicked.connect(self.new_game_requested.emit)
         self.btn_undo.clicked.connect(self.undo_requested.emit)
         self.btn_flip.clicked.connect(self.flip_requested.emit)
         self.btn_draw.clicked.connect(self.draw_requested.emit)
         self.btn_resign.clicked.connect(self.resign_requested.emit)
+        self.btn_import_state.clicked.connect(self.import_state_requested.emit)
         self.btn_export_state.clicked.connect(self.export_state_requested.emit)
         self.btn_llm_config.clicked.connect(self.llm_config_requested.emit)
-        self.btn_persona_config.clicked.connect(self.persona_config_requested.emit)
 
         layout.addWidget(mode_label)
         layout.addWidget(self.mode_combo)
         layout.addWidget(self.elo_label)
+        layout.addWidget(self.elo_preset_combo)
         layout.addWidget(self.elo_spin)
         layout.addWidget(sep1)
         layout.addWidget(self.btn_new_game)
@@ -234,11 +248,27 @@ class ControlBar(QWidget):
         layout.addWidget(self.btn_draw)
         layout.addWidget(self.btn_resign)
         layout.addStretch()
-        layout.addWidget(self.btn_persona_config)
+        layout.addWidget(theme_label)
+        layout.addWidget(self.theme_combo)
         layout.addWidget(self.btn_llm_config)
+        layout.addWidget(self.btn_import_state)
         layout.addWidget(self.btn_export_state)
 
         self._update_elo_visibility(self.mode_combo.currentText())
+
+    def _on_elo_preset_changed(self, text: str):
+        preset_map = {
+            "新手 (500)": 500,
+            "业余 (1000)": 1000,
+            "职业 (1500)": 1500,
+            "大师 (2000)": 2000,
+            "特级大师 (2500)": 2500,
+        }
+        if text in preset_map:
+            self.elo_spin.blockSignals(True)
+            self.elo_spin.setValue(preset_map[text])
+            self.elo_spin.blockSignals(False)
+            self.elo_changed.emit(preset_map[text])
 
     def _on_mode_changed(self, text: str):
         self._update_elo_visibility(text)
@@ -247,4 +277,5 @@ class ControlBar(QWidget):
     def _update_elo_visibility(self, text: str):
         is_vs_engine = MODE_LABELS[GameMode.VS_ENGINE] == text
         self.elo_label.setVisible(is_vs_engine)
+        self.elo_preset_combo.setVisible(is_vs_engine)
         self.elo_spin.setVisible(is_vs_engine)

@@ -97,7 +97,12 @@ class StockfishClient:
         self.target_elo = max(STOCKFISH_MIN_ELO, min(STOCKFISH_MAX_ELO, elo))
         if self._proc is not None and self._proc.stdin is not None:
             self._send("setoption name UCI_LimitStrength value true")
-            self._send(f"setoption name UCI_Elo value {self.target_elo}")
+            if self.target_elo < 1320:
+                skill = max(0, int((self.target_elo - 500) / (1320 - 500) * 6))
+                self._send(f"setoption name Skill Level value {skill}")
+                self._send("setoption name UCI_Elo value 1320")
+            else:
+                self._send(f"setoption name UCI_Elo value {self.target_elo}")
 
     def _sync(self):
         self._send("isready")
