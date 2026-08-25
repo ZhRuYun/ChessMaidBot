@@ -60,8 +60,8 @@ BOARD_THEME = {
     "capture_indicator": "#4B6B38",     # 合法吃子圆环
 }
 
-# 棋盘网格尺寸 (默认 80px，支持高分屏高清矢量直绘)
-DEFAULT_SQUARE_SIZE = 80
+# 棋盘网格尺寸 (默认 64px，保证 820px 窗口高度下棋盘完整可见且不被裁切；SVG 矢量棋子仍高清)
+DEFAULT_SQUARE_SIZE = 64
 BOARD_SIZE = DEFAULT_SQUARE_SIZE * 8
 
 # 女仆与系统默认人设 Prompt (优化版: 强调棋理战术要点、清晰的思考与建议分层)
