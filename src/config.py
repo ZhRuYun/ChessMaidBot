@@ -1,6 +1,7 @@
 """
 ChessMaidBot 全局配置与常量定义
 """
+import sys
 from pathlib import Path
 
 # 路径常量
@@ -31,7 +32,8 @@ ensure_data_directories()
 
 # Stockfish 引擎 (模块4): 将可执行文件放入 engines/ 目录即可被识别
 ENGINE_DIR = BASE_DIR / "engines"
-ENGINE_PATH = ENGINE_DIR / "stockfish"
+# Windows 下可执行文件为 stockfish.exe, 其余平台为 stockfish
+ENGINE_PATH = ENGINE_DIR / ("stockfish.exe" if sys.platform == "win32" else "stockfish")
 STOCKFISH_DEFAULT_SKILL = 10
 STOCKFISH_DEFAULT_ELO = 1500
 STOCKFISH_MIN_ELO = 500

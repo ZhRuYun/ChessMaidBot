@@ -113,6 +113,39 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertTrue(self.window.controller._is_locked())
         self.assertEqual(len(self.window.controller.history_store.list_games()), 1)
 
+    def test_new_game_during_engine_match_resets_board(self):
+        """回归测试: 人机模式下对局中点「新局」应正常重置棋盘
+        (曾因访问 chess_board.flipped 属性名错误抛 AttributeError, 导致 new_game 永不执行)"""
+        from PySide6.QtWidgets import QMessageBox
+        from src.controller.game_modes import GameMode
+
+        self.window.controller.set_mode(GameMode.VS_ENGINE)
+        self.window.controller.apply_move(chess.Move.from_uci("e2e4"))
+        if self.window._llm_thread is not None:
+            self.window._llm_thread.wait(1000)
+            APP.processEvents()
+        self.window.controller.apply_move(chess.Move.from_uci("e7e5"))
+        if self.window._llm_thread is not None:
+            self.window._llm_thread.wait(1000)
+            APP.processEvents()
+        self.assertEqual(len(self.window.controller.board_state.board.move_stack), 2)
+
+        class _FakeBtn:
+            pass
+
+        # 模拟用户点击「新局」→ 确认 → 选边对话框中选择执白
+        chosen_btn = _FakeBtn()
+        with patch("src.gui.main_window.QMessageBox.question", return_value=QMessageBox.Yes), \
+             patch("src.gui.main_window.QMessageBox.exec", new=lambda self: None), \
+             patch("src.gui.main_window.QMessageBox.addButton", new=lambda self, text, role: _FakeBtn()), \
+             patch("src.gui.main_window.QMessageBox.clickedButton", new=lambda self: chosen_btn):
+            self.window.on_new_game()  # 不应抛出 AttributeError
+
+        APP.processEvents()
+        self.assertEqual(len(self.window.controller.board_state.board.move_stack), 0)
+        self.assertEqual(self.window.controller.get_fen(), chess.STARTING_FEN)
+        self.assertEqual(self.window.history_panel.table.rowCount(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
