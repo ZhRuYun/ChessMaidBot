@@ -6,7 +6,7 @@ LLM 女仆互动对话面板 (模块1 - GUI)
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser,
-    QLineEdit, QPushButton, QLabel
+    QLineEdit, QPushButton, QLabel, QSizePolicy
 )
 from PySide6.QtCore import Signal
 import markdown
@@ -23,6 +23,10 @@ class ChatPanel(QWidget):
     def __init__(self, triggers: TeachingTriggers, parent=None):
         super().__init__(parent)
         self.triggers = triggers
+
+        # 保证右侧面板最小宽度不被窗口右边缘裁切，同时允许在宽窗口下扩展
+        self.setMinimumWidth(280)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)

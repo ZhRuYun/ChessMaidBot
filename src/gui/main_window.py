@@ -166,7 +166,8 @@ class MainWindow(QMainWindow):
         self.chat_panel.message_sent.connect(self.on_user_chat_message)
         self.chat_panel.ask_llm_requested.connect(self.on_ask_llm_requested)
         self.chat_panel.teaching_triggers_changed.connect(self.controller.set_teaching)
-        content_layout.addWidget(self.chat_panel)
+        # 右侧面板设置 stretch=1 与中央棋盘区均分剩余空间，避免窗口右边缘裁切
+        content_layout.addWidget(self.chat_panel, stretch=1)
 
         main_layout.addLayout(content_layout)
 

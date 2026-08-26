@@ -116,6 +116,29 @@ BOARD_THEME = {
 }
 ```
 
+### 棋盘格子尺寸
+
+在 `src/config.py` 中的 `DEFAULT_SQUARE_SIZE`（单位：像素）控制每一格的边长，棋盘总尺寸 = `DEFAULT_SQUARE_SIZE × 8`。该值直接影响中央棋盘的渲染大小与窗口布局：
+
+```python
+DEFAULT_SQUARE_SIZE = 64   # 当前默认；80 = 大棋盘(640×640)，64 = 标准棋盘(512×512)
+BOARD_SIZE = DEFAULT_SQUARE_SIZE * 8
+```
+
+> 调整建议：若发现棋盘底部被窗口裁切（常见于 820px 高度窗口或高 DPI 缩放下），将此值从 `80` 调小为 `64` 即可留出充足余量；反之在小屏上想放大棋盘可调大到 `72~80`。棋子为 SVG 矢量 2x 超采样预渲染，缩放后仍保持高清锐利。
+
+### 右侧对话面板最小宽度
+
+在 `src/gui/chat_panel.py` 的 `ChatPanel.__init__` 中通过 `setMinimumWidth` 设置右侧面板的最小宽度，防止窗口最大化或高 DPI 缩放下被窗口右边缘裁切：
+
+```python
+# 保证右侧面板最小宽度不被窗口右边缘裁切，同时允许在宽窗口下扩展
+self.setMinimumWidth(280)
+self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+```
+
+> 当右侧"发送"按钮或状态徽章被窗口右边缘裁掉时，可适当调大 `setMinimumWidth` 数值（建议 280 ~ 360 之间）。同时在 `src/gui/main_window.py` 中 `chat_panel` 已设置 `stretch=1`，与中央棋盘区按比例均分剩余空间。
+
 ---
 
 ## 五、教学触发器配置
