@@ -5,7 +5,7 @@
 """
 from typing import Optional
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QFrame,
     QLabel, QMessageBox, QApplication, QInputDialog
 )
 from PySide6.QtCore import QThread, Signal, Qt
@@ -110,8 +110,8 @@ class MainWindow(QMainWindow):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 14, 16, 14)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(16, 9, 16, 14)
+        main_layout.setSpacing(8)
 
         # 1. 顶部控制栏 (现代极简风格)
         self.control_bar = ControlBar(self)
@@ -127,6 +127,14 @@ class MainWindow(QMainWindow):
         self.control_bar.elo_changed.connect(self.controller.set_engine_elo)
         self.control_bar.theme_changed.connect(self.on_theme_changed)
         main_layout.addWidget(self.control_bar)
+
+        # 固定横向边界：约束顶部控制栏与三栏工作区，不参与拖拽。
+        toolbar_boundary = QFrame(self)
+        toolbar_boundary.setObjectName("toolbarBoundary")
+        toolbar_boundary.setFixedHeight(2)
+        toolbar_boundary.setFrameShape(QFrame.HLine)
+        toolbar_boundary.setStyleSheet("background-color: #334155; border: none;")
+        main_layout.addWidget(toolbar_boundary)
 
         # 2. 中间核心区：使用 QSplitter 提供两条可拖拽竖向分隔线。
         self.content_splitter = QSplitter(Qt.Horizontal, self)
