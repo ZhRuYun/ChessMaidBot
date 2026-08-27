@@ -81,6 +81,7 @@ class GameController(QObject):
     game_reset = Signal()
     mode_changed = Signal(object)          # GameMode
     engine_thinking_changed = Signal(bool) # 引擎是否在思考中 (用于锁定 UI 交互)
+    engine_error = Signal(str)             # 引擎启动或计算失败的可见错误
 
     def __init__(self, history_store: Optional[HistoryStore] = None, parent=None):
         super().__init__(parent)
@@ -162,12 +163,15 @@ class GameController(QObject):
         self.engine_thinking_changed.emit(False)
         try:
             move = chess.Move.from_uci(uci_move)
-            self.apply_move(move)
-        except Exception:
-            pass
+        except ValueError as exc:
+            self.engine_error.emit(f"Stockfish 返回了无效着法 {uci_move!r}: {exc}")
+            return
+        if not self.apply_move(move):
+            self.engine_error.emit(f"Stockfish 返回的着法 {uci_move} 在当前局面中不合法。")
 
     def _on_engine_move_failed(self, error_msg: str):
         self.engine_thinking_changed.emit(False)
+        self.engine_error.emit(error_msg)
 
     def undo(self) -> bool:
         """悔棋一步; 若在人机/女仆陪练模式下若轮到玩家，则自动撤销两步(玩家+对方)"""

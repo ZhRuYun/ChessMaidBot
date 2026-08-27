@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         ctrl.game_over.connect(self.on_game_over)
         ctrl.game_reset.connect(self.on_game_reset)
         ctrl.engine_thinking_changed.connect(self.on_engine_thinking)
+        ctrl.engine_error.connect(self.on_engine_error)
 
     def _generate_llm_summary(self, snapshot) -> str:
         """为终局持久化生成高质量的 LLM 总结"""
@@ -210,6 +211,17 @@ class MainWindow(QMainWindow):
             self.chess_board.setEnabled(False)
         else:
             self.chess_board.setEnabled(True)
+
+    def on_engine_error(self, error_msg: str):
+        """显示引擎故障，避免人机模式无响应却没有任何反馈。"""
+        self.status_bar_label.setText("Stockfish 无法走棋")
+        self.status_bar_label.setStyleSheet("color: #ef4444; font-size: 14px; font-weight: 700; padding: 4px;")
+        QMessageBox.warning(
+            self,
+            "Stockfish 引擎错误",
+            f"Stockfish 无法完成走棋：\n\n{error_msg}\n\n"
+            "请确认 engines/stockfish.exe 存在且能够正常运行。",
+        )
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
         """
