@@ -5,7 +5,7 @@
 """
 from typing import Optional
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QFrame,
     QLabel, QMessageBox, QApplication, QInputDialog
 )
 from PySide6.QtCore import QThread, Signal, Qt
@@ -110,8 +110,8 @@ class MainWindow(QMainWindow):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 14, 16, 14)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(16, 9, 16, 14)
+        main_layout.setSpacing(8)
 
         # 1. 顶部控制栏 (现代极简风格)
         self.control_bar = ControlBar(self)
@@ -128,47 +128,78 @@ class MainWindow(QMainWindow):
         self.control_bar.theme_changed.connect(self.on_theme_changed)
         main_layout.addWidget(self.control_bar)
 
-        # 2. 中间核心区：左侧记谱表 + 中央棋盘 + 右侧LLM对话 (三栏现代极简布局)
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(16)
+        # 固定横向边界：约束顶部控制栏与三栏工作区，不参与拖拽。
+        toolbar_boundary = QFrame(self)
+        toolbar_boundary.setObjectName("toolbarBoundary")
+        toolbar_boundary.setFixedHeight(2)
+        toolbar_boundary.setFrameShape(QFrame.HLine)
+        toolbar_boundary.setStyleSheet("background-color: #334155; border: none;")
+        main_layout.addWidget(toolbar_boundary)
+
+        # 2. 中间核心区：使用 QSplitter 提供两条可拖拽竖向分隔线。
+        self.content_splitter = QSplitter(Qt.Horizontal, self)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(5)
+        self.content_splitter.setStyleSheet("""
+            QSplitter::handle:horizontal {
+                background-color: #334155;
+                margin: 4px 1px;
+                border-radius: 2px;
+            }
+            QSplitter::handle:horizontal:hover,
+            QSplitter::handle:horizontal:pressed {
+                background-color: #38bdf8;
+            }
+        """)
 
         # [左侧]：走法历史双栏记谱表
-        history_container = QVBoxLayout()
+        history_widget = QWidget(self.content_splitter)
+        history_container = QVBoxLayout(history_widget)
+        history_container.setContentsMargins(0, 0, 0, 0)
         history_title = QLabel("走法记谱 (Moves)")
         history_title.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 13px; padding-bottom: 2px;")
         history_container.addWidget(history_title)
 
-        self.history_panel = MoveHistoryPanel(self)
-        self.history_panel.setFixedWidth(240)
+        self.history_panel = MoveHistoryPanel(history_widget)
+        history_widget.setMinimumWidth(190)
         self.history_panel.nav_first_requested.connect(self.on_nav_first)
         self.history_panel.nav_prev_requested.connect(self.on_nav_prev)
         self.history_panel.nav_next_requested.connect(self.on_nav_next)
         self.history_panel.nav_last_requested.connect(self.on_nav_last)
         self.history_panel.move_selected.connect(self.on_history_move_selected)
         history_container.addWidget(self.history_panel)
-        content_layout.addLayout(history_container)
+        self.content_splitter.addWidget(history_widget)
 
         # [中央]：棋盘区域 + 行动与将军状态指示
-        board_container = QVBoxLayout()
+        board_widget = QWidget(self.content_splitter)
+        board_container = QVBoxLayout(board_widget)
+        board_container.setContentsMargins(8, 0, 8, 0)
         board_container.setAlignment(Qt.AlignCenter)
         self.status_bar_label = QLabel("当前行动: 白方 (White)")
         self.status_bar_label.setAlignment(Qt.AlignCenter)
         self.status_bar_label.setStyleSheet("color: #38bdf8; font-size: 14px; font-weight: 700; padding: 4px;")
         board_container.addWidget(self.status_bar_label)
 
-        self.chess_board = ChessBoardWidget(self.controller.board_state, self)
+        self.chess_board = ChessBoardWidget(self.controller.board_state, board_widget)
         self.chess_board.move_ready.connect(self.controller.apply_move)
         board_container.addWidget(self.chess_board, alignment=Qt.AlignCenter)
-        content_layout.addLayout(board_container, stretch=1)
+        board_widget.setMinimumWidth(self.chess_board.minimumSizeHint().width() + 16)
+        self.content_splitter.addWidget(board_widget)
 
         # [右侧]：LLM 女仆互动对话窗口
-        self.chat_panel = ChatPanel(self.controller.teaching, self)
+        self.chat_panel = ChatPanel(self.controller.teaching, self.content_splitter)
+        self.chat_panel.setMinimumWidth(260)
         self.chat_panel.message_sent.connect(self.on_user_chat_message)
         self.chat_panel.ask_llm_requested.connect(self.on_ask_llm_requested)
         self.chat_panel.teaching_triggers_changed.connect(self.controller.set_teaching)
-        content_layout.addWidget(self.chat_panel)
+        self.content_splitter.addWidget(self.chat_panel)
 
-        main_layout.addLayout(content_layout)
+        # 默认比例接近原布局；之后可拖动任一竖线自由调整相邻区域宽度。
+        self.content_splitter.setStretchFactor(0, 0)
+        self.content_splitter.setStretchFactor(1, 1)
+        self.content_splitter.setStretchFactor(2, 1)
+        self.content_splitter.setSizes([240, 560, 440])
+        main_layout.addWidget(self.content_splitter, stretch=1)
 
     def connect_controller(self):
         ctrl = self.controller

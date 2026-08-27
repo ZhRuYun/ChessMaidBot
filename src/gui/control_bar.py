@@ -28,7 +28,7 @@ class ControlBar(QWidget):
         super().__init__(parent)
         self.setObjectName("ControlBar")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 5, 12, 5)
         layout.setSpacing(10)
 
         # 1. 模式选择下拉框
