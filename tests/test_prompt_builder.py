@@ -30,7 +30,9 @@ class TestPromptBuilder(unittest.TestCase):
         )
         prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers, is_auto_move=True, game_mode_name="vs_engine")
         self.assertIn("当下局面评估", prompt)
-        self.assertIn("建议着法推荐", prompt)
+        self.assertIn("建议着法", prompt)
+        self.assertIn("着法：说明", prompt)
+        self.assertIn("120 字以内", prompt)
         self.assertIn("历史走法评估", prompt)
         self.assertIn("落子自动教学触发", prompt)
         self.assertIn("当前游戏模式: vs_engine", prompt)
@@ -48,7 +50,8 @@ class TestPromptBuilder(unittest.TestCase):
         )
         prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers, is_auto_move=False)
         self.assertIn("当下局面评估", prompt)
-        self.assertNotIn("建议着法推荐", prompt)
+        self.assertIn("建议着法", prompt)
+        self.assertIn("固定输出 3 个候选", prompt)
         self.assertNotIn("历史走法评估", prompt)
         self.assertIn("主动询问女仆教学指导", prompt)
 
@@ -61,7 +64,8 @@ class TestPromptBuilder(unittest.TestCase):
             game_over_summary=False,
         )
         prompt = PromptBuilder.build_custom_prompt(self.snapshot, triggers)
-        self.assertIn("棋理剖析", prompt)
+        self.assertIn("建议着法", prompt)
+        self.assertIn("3 个合法候选", prompt)
 
 
 if __name__ == "__main__":

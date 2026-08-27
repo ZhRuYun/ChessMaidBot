@@ -223,10 +223,10 @@ class MainWindow(QMainWindow):
                 self._online_client.send_move(uci, self.controller.get_fen())
 
         triggers = self.controller.teaching
-        if not triggers.master_enabled:
+        if not triggers.master_enabled or not self._has_configured_llm_api():
             return
 
-        # 构建定制 prompt (带入当前游戏模式)
+        # 构建内部教学 prompt。它只发送给模型，不写入聊天展示区。
         snapshot = self.controller.get_snapshot()
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
@@ -588,10 +588,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _has_configured_llm_api(self) -> bool:
+        """自动教学仅在真实 LLM Agent 已配置 API Key 时启用。"""
+        return isinstance(self.agent, LLMAgent) and bool(self.agent.api_key.strip())
+
     def _sync_llm_connection_status(self):
         """根据当前 agent 的 Key 配置, 同步 chat_panel 状态徽章"""
         if isinstance(self.agent, LLMAgent):
-            connected = bool(self.agent.api_key)
+            connected = self._has_configured_llm_api()
             self.chat_panel.set_llm_connected(connected, self.agent.model)
         else:
             # 非 LLMAgent (如测试用 EchoAgent) 默认显示在线

@@ -67,6 +67,12 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertIn("白方", self.window.status_bar_label.text())
         self.assertIsNone(self.window.chess_board.last_move)
 
+    def test_move_does_not_trigger_teaching_without_configured_api(self):
+        self.window.chess_board.execute_user_move(chess.E2, chess.E4)
+        APP.processEvents()
+        self.assertIsNone(self.window._llm_thread)
+        self.assertNotIn("玩家落子自动教学触发", self.window.chat_panel.chat_display.toPlainText())
+
     def test_chat_message_flow(self):
         self.window.chat_panel.send_message("请评估局面")
         if self.window._llm_thread is not None:
