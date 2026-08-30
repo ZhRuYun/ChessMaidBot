@@ -13,10 +13,12 @@ Agent 模块（`src/agents/`）负责大语言模型交互、提示词标准化�
 src/agents/
 ├── __init__.py
 ├── base.py            # Agent 抽象基类 (ChessAgent)、请求结构体 (AgentRequest)、局面快照 (PositionSnapshot) 与工具定义 (AgentTools)
-├── llm_agent.py       # 真实 LLM API 接入实现 (结构化输出 / OpenAI 兼容 / 流式自愈 / Tool Calling)
+├── llm_agent.py       # 真实 LLM API 接入实现 (结构化输出+自纠错 / HTTP 错误分类退避 / 流式自愈 / Tool Calling / 防注入 / 用量统计)
 ├── echo_agent.py      # 本地降级回退 Agent
 ├── memory.py          # 双层记忆系统 (ShortTermMemory 滑动上下文 + LongTermMemory 玩家画像)
-├── multi_role.py      # 多角色协同解耦 (CoachRole 棋理分析 + MaidPersonaRole 情感润色)
+├── multi_role.py      # 两段式流水线 (CoachRole 结构化分析 + MaidPersonaRole 人格润色 + MultiRoleCoordinator 编排)
+├── prompt_registry.py # Prompt 模板版本化注册表 (人设/护栏/教学规则/走法决策/两段式模板)
+├── semantic_cache.py  # 语义缓存 (同局面+同开关确定性请求 LRU 复用回复)
 └── prompt_builder.py  # 教学提示词动态装配器 (内置防注入隔离护栏)
 ```
 
@@ -125,5 +127,12 @@ src/agents/
    - 具备代码块自愈闭合能力（奇数个 ` ``` ` 自动在尾部补齐）。
    - 支持通过 `is_cancelled` 标志在玩家快速下子时即时中断在途流。
 2. **多角色协同解耦 (`src/agents/multi_role.py`)**：
-   - `CoachRole`：负责提取客观严谨的战术数据与着法建议。
-   - `MaidPersonaRole`：负责将战术要点融入女仆人设与陪伴语气中。
+   - `CoachRole`：第一阶段低温 `json_object` 结构化棋理分析。
+   - `MaidPersonaRole`：第二阶段人格化改写（保留棋理结论不改事实）；`local_compose` 为零网络降级组合。
+   - 终局复盘总结默认走两段式流水线（`AgentRequest.two_stage`）。
+3. **HTTP 传输韧性**：
+   - 401/403 等客户端错误立即失败不重试；429 按 `Retry-After`、5xx/网络异常指数退避。
+   - 流式已推送内容后中断不再重试（杜绝 UI 重复输出）；全程总 deadline 超时。
+   - `get_move` 失败降级 Stockfish 并通过 `llm_fallback_used` 信号向 UI 披露来源。
+4. **防注入纵深**：System 护栏模板 + 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出统一沙箱截断（`_sandbox_tool_output`）。
+5. **Token 成本工程**：PGN 单源化（仅系统上下文块尾部窗口）+ 短期记忆只存意图标签 + 语义缓存 + 工具输出截断。

@@ -158,16 +158,24 @@
     * `PositionSnapshot`: 纯数据类，打包 FEN、PGN、当前行棋方、合法走法数、将军状态、终局原因。
     * `AgentTools`: 注入 5 大工具接口（开局库、历史库、引擎分析、联网搜索、悔棋申请）。
     * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history` + `tools`）。
-  * `llm_agent.py` (`LLMAgent`, `ResilientStreamParser`):
-    * 支持 OpenAI 兼容规范、思考档位与流式打字机回调。
-    * `get_move`: 结构化 JSON Schema 输出与合法性过滤，彻底消除正则解析缺陷。
+  * `llm_agent.py` (`LLMAgent`, `ResilientStreamParser`, `LLMTransportError`):
+    * 支持 OpenAI 兼容规范与流式打字机回调；HTTP 错误分类（401/403 不重试、429 按 Retry-After 退避、5xx 指数退避）与总 deadline 超时。
+    * 流式重试不再重复推送已输出内容；取消检查贯通 `reply`/`get_move` 与 SSE 读取循环。
+    * `get_move`: 结构化 JSON 输出 + 非法着法自纠错重试；失败降级 Stockfish 并经 `last_move_source` + `llm_fallback_used` 信号向 UI 披露（已移除随机走法兜底）。
+    * 分层防注入：System 护栏（`prompt_registry:system_guard`）+ 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出沙箱截断。
+    * Token 用量统计（`get_usage_stats`）与统一日志。
+  * `semantic_cache.py` (`SemanticCache`):
+    * 自动教学/主动询问等确定性请求（局面+开关）的 LRU 结果缓存，命中直接复用回复。
+  * `prompt_registry.py`:
+    * 全部 Prompt 模板集中版本化管理（人设唯一来源指向 `config.DEFAULT_MAID_PERSONA`）。
   * `memory.py` (`ShortTermMemory`, `LongTermMemory`, `PlayerProfile`):
     * `ShortTermMemory`: 维护最近对局滑动窗口对话历史。
     * `LongTermMemory`: 跨对局持久化玩家胜率、偏好开局、高频失误与棋风标签（`data/player_profile.json`）。
-  * `multi_role.py` (`CoachRole`, `MaidPersonaRole`):
-    * 多角色协同解耦编排。
+  * `multi_role.py` (`CoachRole`, `MaidPersonaRole`, `MultiRoleCoordinator`):
+    * 两段式流水线（终局总结默认启用）：教练低温 JSON 结构化分析 → 女仆人格化改写；`local_compose` 提供零网络降级组合。
   * `prompt_builder.py` (`PromptBuilder`):
     * 教学 Prompt 组装器，内置 `<!-- BEGIN_TRUSTED_CHESS_DATA -->` 防注入护栏。
+    * Token 单源化：完整 PGN 仅由 `LLMAgent._build_context_block` 以尾部窗口提供，本构建器不再内嵌棋谱。
 
 ### 模块 6: 数据库与棋局持久化 (`src/database/`)
 * **设计原则**：“标准 PGN + LLM 对局总结”复合结构持久化与开局库解耦。

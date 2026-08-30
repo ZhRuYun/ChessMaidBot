@@ -57,11 +57,13 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 | **4. Stockfish 引擎** | UCI 协议通信 | ✅ 已完成 | `StockfishClient` 进程管理，标准 stdin/stdout 流式解析与容错降级 |
 | | 目标 Elo 控制 | ✅ 已完成 | 官方 `UCI_LimitStrength` + `UCI_Elo`，支持 500 ~ 3190 连续 Elo 精度调节 |
 | | 多 PV 分析与共享池 | ✅ 已完成 | `SharedEngine` 进程级互斥复用池，多 PV 分析与估分，避免重复拉起进程 |
-| **5. Agent 与记忆层** | 结构化输出与决策 | ✅ 已完成 | `LLMAgent.get_move` 采用 `json_object` 规范输出与合法走法过滤 |
-| | 双层记忆机制 | ✅ 已完成 | `ShortTermMemory` 滑动对话上下文 + `LongTermMemory` 玩家画像持久化 |
+| **5. Agent 与记忆层** | 结构化输出与决策 | ✅ 已完成 | `json_object` 规范输出 + 非法着法自纠错重试 + Stockfish 兜底来源披露（已移除随机走法） |
+| | 双层记忆机制 | ✅ 已完成 | `ShortTermMemory` 意图标签瘦身上下文 + `LongTermMemory` 画像（终局自动回填开局/失误） |
+| | 语义缓存与模板注册表 | ✅ 已完成 | `SemanticCache` 同局面复用回复；`prompt_registry` 模板版本化管理 |
+| | HTTP 韧性与可观测 | ✅ 已完成 | 429/5xx 分类退避、总超时、取消贯通、Token 用量统计与统一日志 |
 | | 自主 Tool Calling | ✅ 已完成 | 提供开局库查询、历史检索、引擎深度分析、联网搜索与悔棋申请 5 大工具 |
-| | 多角色协同 | ✅ 已完成 | `CoachRole`（客观棋理）与 `MaidPersonaRole`（人设润色）解耦编排 |
-| **6. 数据库与归档** | 复合历史棋局库 | ✅ 已完成 | `data/games/` 异步保存 `PGN + LLM 总结`，自动过滤 0 步/无效对局 |
+| | 多角色协同 | ✅ 已完成 | `MultiRoleCoordinator` 两段式流水线：教练 JSON 结构化分析 → 女仆人格化改写 |
+| **6. 数据库与归档** | 复合历史棋局库 | ✅ 已完成 | `data/games/` 异步保存 `PGN + LLM 总结`，自动过滤 0 步/无效对局；支持关键词检索（RAG-lite） |
 | | 开局库与题库 | ✅ 已完成 | `data/books/` 集成 Lichess 开源开局库与 Polyglot，支持 ECO 与权重推荐 |
 
 ---
@@ -136,7 +138,7 @@ python3 main.py
 ```
 ChessMaidBot/
 ├── main.py                     # 程序启动主入口
-├── requirements.txt            # 项目依赖 (python-chess, PySide6, qasync, markdown)
+├── requirements.txt            # 项目依赖 (python-chess, PySide6, markdown)
 ├── README.md                   # 项目总说明文档
 ├── docs/                       # 核心设计与规范文档
 │   ├── ARCHITECTURE.md         # 架构全景与详细接口设计文档
