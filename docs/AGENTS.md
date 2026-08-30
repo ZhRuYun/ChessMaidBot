@@ -20,16 +20,16 @@ src/agents/
 
 ---
 
-## 2. Agent 可调用的工具列表 (AgentTools)
+## 2. Agent 可调用的工具列表 (AgentTools & Function Calling)
 
-当 `GameController` 组装 `AgentRequest` 时，会通过 `AgentTools` 将系统工具库注入给 Agent：
+当 `GameController` 组装 `AgentRequest` 时，会通过 `AgentTools` 将系统工具库注入给 Agent，并通过 OpenAI 标准 JSON Schema 工具声明提供自主 Tool Call 能力：
 
-| 工具接口 | 对应方法 | 支持参数与功能 | 说明 |
+| 工具名称 / 接口 | 对应方法 | 支持参数与功能 | 说明 |
 |---|---|---|---|
-| **开局库查询候选走法及权重** (`query_opening` / `read_database(category="opening")`) | `history_store.query_database(category="opening", ...)` | `fen="rnbqkbnr/..."` (查询开局名称、ECO 编码及候选走法权重) | 基于 Lichess 开局库，未提供 FEN 时自动注入当前局面 |
-| **历史对局查询与归档检索** (`query_history` / `read_database(category="history")`) | `history_store.query_database(category="history", ...)` | `limit=5, filter_useless=True` (检索已归档历史对局及总结) | 仅检索玩家正常完赛的有效对局 |
-| **引擎状态读取** (`read_engine_state`) | `stockfish_client.get_state(state_type, ...)` | `state_type="best_move"` (获取当前最优着法 UCI)<br>`state_type="analyse"` (多候选线评估、score_cp 分数与 PV 主变例)<br>`state_type="eval"` (即时静态评估值) | Agent 在生成回复或陪练走子时调用，评估深度与线程均受沙箱限制 |
-| **联网搜索工具** (`web_search`) | `game_controller._agent_web_search(query)` | `query="国际象棋 西西里防御 纳道尔夫变例"` | 为 LLM 提供开放 API 检索国际象棋战术理论与知识摘要 |
+| **开局库查询** (`query_opening_book` / `query_opening`) | `history_store.query_database(category="opening", ...)` | `fen="rnbqkbnr/..."` (查询开局名称、ECO 编码及候选走法权重) | 基于 Lichess 开局库，未提供 FEN 时自动注入当前局面 |
+| **历史对局检索** (`query_game_history` / `query_history`) | `history_store.query_database(category="history", ...)` | `limit=5, filter_useless=True` (检索已归档历史对局及总结) | 仅检索玩家正常完赛的有效对局 |
+| **引擎深度分析** (`engine_analyze` / `read_engine_state`) | `stockfish_client.get_state(state_type, ...)` | `depth=12, multipv=2` (多候选线评估、score_cp 分数与 PV 主变例) | Agent 自主根据玩家问题推演指定局面 |
+| **联网知识搜索** (`search_chess_knowledge` / `web_search`) | `game_controller._agent_web_search(query)` | `query="国际象棋 西西里防御 纳道尔夫变例"` | 为 LLM 提供开放 API 检索国际象棋战术理论与知识摘要 |
 | **向玩家发送悔棋请求** (`request_undo`) | `game_controller._agent_request_undo(reason)` | `reason="局势落后过大"` | 与LLM对弈模式下，LLM判断局势不利时向玩家发送悔棋请求 |
 
 ---

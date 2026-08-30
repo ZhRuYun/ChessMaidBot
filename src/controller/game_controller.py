@@ -16,7 +16,7 @@ import json
 import threading
 import urllib.parse
 import urllib.request
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 
 import chess
 from PySide6.QtCore import QObject, Signal, QThread
@@ -600,6 +600,108 @@ class GameController(QObject):
             return f"未检索到关于 '{query}' 的直接摘要信息。"
         except Exception as e:
             return f"联网搜索请求失败: {e}"
+
+    def evaluate_game_moves_quality(self, depth: int = 10) -> List[Dict[str, Any]]:
+        """全盘评估走法质量 (Coach Mode):
+        计算每步棋的胜率/评估分落差并打标 (Best, Excellent, Good, Inaccuracy, Mistake, Blunder)
+        """
+        evaluated_steps = []
+        board = chess.Board()
+        prev_eval = 0.0  # 初始白方均势分 cp
+
+        def _analyse(client, fen_str):
+            return client.get_state(fen_str, state_type="analyse", depth=depth, multipv=1)
+
+        # 遍历每一步走法
+        for rec in self.history.records:
+            # 1. 白方着法评估
+            if rec.white_san and rec.white_san != "...":
+                try:
+                    move = board.parse_san(rec.white_san)
+                    board.push(move)
+                    fen_after = board.fen()
+                    rec.fen_after_white = fen_after
+                    
+                    state = shared_engine.call(lambda c: _analyse(c, fen_after))
+                    cp = 0
+                    if state.get("analysis") and state["analysis"][0].get("score_cp") is not None:
+                        cp = state["analysis"][0]["score_cp"]
+                        # Stockfish 的 cp 评估始终针对当前轮到方，将其统一转换为白方视角评估
+                        current_eval_white = cp if board.turn == chess.WHITE else -cp
+                    else:
+                        current_eval_white = prev_eval
+                    
+                    delta = current_eval_white - prev_eval  # 白方走棋收益
+                    prev_eval = current_eval_white
+                    
+                    if delta >= 0:
+                        q = "Best"
+                    elif delta >= -30:
+                        q = "Excellent"
+                    elif delta >= -80:
+                        q = "Good"
+                    elif delta >= -180:
+                        q = "Inaccuracy"
+                    elif delta >= -350:
+                        q = "Mistake"
+                    else:
+                        q = "Blunder"
+                    rec.white_quality = q
+                    evaluated_steps.append({
+                        "ply": rec.move_number * 2 - 1,
+                        "move": rec.white_san,
+                        "turn": "White",
+                        "quality": q,
+                        "delta_cp": round(delta, 1),
+                        "eval_white": round(current_eval_white, 1)
+                    })
+                except Exception:
+                    pass
+
+            # 2. 黑方着法评估
+            if rec.black_san:
+                try:
+                    move = board.parse_san(rec.black_san)
+                    board.push(move)
+                    fen_after = board.fen()
+                    rec.fen_after_black = fen_after
+                    
+                    state = shared_engine.call(lambda c: _analyse(c, fen_after))
+                    if state.get("analysis") and state["analysis"][0].get("score_cp") is not None:
+                        cp = state["analysis"][0]["score_cp"]
+                        current_eval_white = cp if board.turn == chess.WHITE else -cp
+                    else:
+                        current_eval_white = prev_eval
+                    
+                    delta = prev_eval - current_eval_white  # 黑方走棋收益 (白方越低黑方越赚)
+                    prev_eval = current_eval_white
+                    
+                    if delta >= 0:
+                        q = "Best"
+                    elif delta >= -30:
+                        q = "Excellent"
+                    elif delta >= -80:
+                        q = "Good"
+                    elif delta >= -180:
+                        q = "Inaccuracy"
+                    elif delta >= -350:
+                        q = "Mistake"
+                    else:
+                        q = "Blunder"
+                    rec.black_quality = q
+                    evaluated_steps.append({
+                        "ply": rec.move_number * 2,
+                        "move": rec.black_san,
+                        "turn": "Black",
+                        "quality": q,
+                        "delta_cp": round(delta, 1),
+                        "eval_white": round(current_eval_white, 1)
+                    })
+                except Exception:
+                    pass
+
+        self.history_changed.emit(self.history.records)
+        return evaluated_steps
 
     def _agent_request_undo(self, reason: str = "局势不利") -> bool:
         """与LLM对弈模式下，LLM发送悔棋请求"""

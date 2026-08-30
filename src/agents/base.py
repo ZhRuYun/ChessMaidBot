@@ -60,6 +60,6 @@ class ChessAgent(ABC):
     name: str = "agent"
 
     @abstractmethod
-    def reply(self, request: AgentRequest) -> str:
-        """根据标准请求生成回复 (Markdown 文本)"""
+    def reply(self, request: AgentRequest, on_chunk: Optional[Callable[[str], None]] = None) -> str:
+        """根据标准请求生成回复 (Markdown 文本), 支持可选的 on_chunk 流式回调"""
         raise NotImplementedError

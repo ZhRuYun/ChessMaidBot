@@ -13,6 +13,8 @@ class MoveRecord:
     black_san: str = ""
     fen_after_white: str = ""
     fen_after_black: str = ""
+    white_quality: str = ""  # 走法质量: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
+    black_quality: str = ""
 
 
 class MoveHistoryManager:

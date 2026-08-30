@@ -115,10 +115,34 @@ class MoveHistoryPanel(QWidget):
 
         num_item = QTableWidgetItem(f"{record.move_number}.")
         num_item.setTextAlignment(Qt.AlignCenter)
-        white_item = QTableWidgetItem(record.white_san)
+        
+        w_text = record.white_san
+        if getattr(record, "white_quality", ""):
+            w_text += f" [{record.white_quality}]"
+        white_item = QTableWidgetItem(w_text)
         white_item.setTextAlignment(Qt.AlignCenter)
-        black_item = QTableWidgetItem(record.black_san)
+        
+        b_text = record.black_san
+        if getattr(record, "black_quality", ""):
+            b_text += f" [{record.black_quality}]"
+        black_item = QTableWidgetItem(b_text)
         black_item.setTextAlignment(Qt.AlignCenter)
+
+        # 根据质量设置高亮颜色
+        def _color_for_q(q):
+            if q == "Best": return "#10b981"
+            if q in ("Mistake", "Blunder"): return "#ef4444"
+            if q == "Inaccuracy": return "#f59e0b"
+            return None
+
+        wc = _color_for_q(getattr(record, "white_quality", ""))
+        if wc:
+            from PySide6.QtGui import QColor
+            white_item.setForeground(QColor(wc))
+        bc = _color_for_q(getattr(record, "black_quality", ""))
+        if bc:
+            from PySide6.QtGui import QColor
+            black_item.setForeground(QColor(bc))
 
         self.table.setItem(row_idx, 0, num_item)
         self.table.setItem(row_idx, 1, white_item)

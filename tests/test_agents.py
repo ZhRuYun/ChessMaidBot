@@ -39,8 +39,14 @@ class TestAgents(unittest.TestCase):
             persona_prompt=agent.persona_prompt,
             snapshot=snapshot,
         )
-        reply = agent.reply(req)
+        
+        chunks = []
+        def _on_chunk(c):
+            chunks.append(c)
+
+        reply = agent.reply(req, on_chunk=_on_chunk)
         self.assertIn("rnbqkbnr", reply)
+        self.assertTrue(len(chunks) > 0)
         self.assertEqual(agent._chat_endpoint(), "https://api.deepseek.com/v1/chat/completions")
         self.assertEqual(agent._models_endpoint(), "https://api.deepseek.com/v1/models")
 

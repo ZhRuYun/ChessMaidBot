@@ -26,8 +26,9 @@ from .control_bar import ControlBar
 
 
 class LLMWorker(QThread):
-    """异步执行 LLM 请求的后台线程，配合 UI 显示 loading spinner"""
-    response_ready = Signal(str, int)  # (回复文本, 代际号)
+    """异步执行 LLM 请求的后台线程，支持流式逐字输出与 loading spinner"""
+    chunk_ready = Signal(str, int)     # (流式片段文本, 代际号)
+    response_ready = Signal(str, int)  # (完整回复文本, 代际号)
     failed = Signal(str, int)          # (错误信息, 代际号)
 
     def __init__(self, agent: ChessAgent, request: AgentRequest, generation: int = 0, parent=None):
@@ -38,7 +39,10 @@ class LLMWorker(QThread):
 
     def run(self):
         try:
-            reply = self.agent.reply(self.request)
+            def _on_chunk(chunk: str):
+                self.chunk_ready.emit(chunk, self.generation)
+
+            reply = self.agent.reply(self.request, on_chunk=_on_chunk)
             self.response_ready.emit(reply, self.generation)
         except Exception as e:
             self.failed.emit(str(e), self.generation)
@@ -239,12 +243,24 @@ class MainWindow(QMainWindow):
         ctrl.undo_requested_by_llm.connect(self.on_llm_undo_requested)
 
     def _generate_llm_summary(self, snapshot) -> str:
-        """为终局持久化生成高质量的 LLM 总结"""
+        """为终局持久化生成高质量的 LLM 战术复盘总结报告 (Coach Mode)"""
+        try:
+            # 1. 运行全盘着法质量评估
+            evaluated_moves = self.controller.evaluate_game_moves_quality(depth=8)
+            blunders = [m for m in evaluated_moves if m.get("quality") in ("Blunder", "Mistake")]
+            
+            blunder_summary = ""
+            if blunders:
+                b_lines = [f"- 第 {b['ply']} 半回合 ({b['turn']} 走 {b['move']}): 判定为 {b['quality']} (评估损失 {b['delta_cp']} cp)" for b in blunders[:4]]
+                blunder_summary = "\n【引擎全盘复盘关键转折与失误点】：\n" + "\n".join(b_lines)
+        except Exception:
+            blunder_summary = ""
+
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
             triggers=self.controller.teaching,
             is_auto_move=False,
-            extra_note="本局已终局，请为对局归档提供精准全面的技术复盘总结。",
+            extra_note=f"本局已终局，请为对局归档提供精准全面的 Coach 战术复盘总结。{blunder_summary}",
         )
         req = self.controller.build_agent_request(
             user_message=custom_prompt,
@@ -756,11 +772,7 @@ class MainWindow(QMainWindow):
         self._dispatch_llm_request(message)
 
     def _dispatch_llm_request(self, message: str):
-        """异步调度 LLM 请求，展示 Loading 旋转控件
-
-        新请求发出时不 terminate 旧线程 (强杀可能中断共享引擎互斥区导致死锁),
-        而是自增代际号: 旧线程完成后其回复因代际不匹配而被静默丢弃。
-        """
+        """异步调度 LLM 请求，展示 Loading 旋转控件与逐字打字机流式渲染"""
         self._llm_generation += 1
         generation = self._llm_generation
 
@@ -768,18 +780,24 @@ class MainWindow(QMainWindow):
         request = self.controller.build_agent_request(message, persona_prompt=self.current_persona)
 
         self._llm_thread = LLMWorker(self.agent, request, generation=generation, parent=self)
+        self._llm_thread.chunk_ready.connect(self._on_llm_chunk)
         self._llm_thread.response_ready.connect(self._on_llm_response)
         self._llm_thread.failed.connect(self._on_llm_failed)
         self._llm_thread.start()
+
+    def _on_llm_chunk(self, chunk: str, generation: int):
+        if generation != self._llm_generation:
+            return
+        self.chat_panel.append_maid_chunk(chunk)
 
     def _on_llm_response(self, reply: str, generation: int):
         if generation != self._llm_generation:
             return  # 过期回复, 丢弃
         self.chat_panel.set_loading(False)
-        self.chat_panel.append_maid_message(reply)
+        self.chat_panel.finalize_maid_stream(reply)
 
     def _on_llm_failed(self, error_msg: str, generation: int):
         if generation != self._llm_generation:
             return
         self.chat_panel.set_loading(False)
-        self.chat_panel.append_maid_message(f"*(女仆回复出现异常: {error_msg})*")
+        self.chat_panel.finalize_maid_stream(f"*(女仆回复出现异常: {error_msg})*")

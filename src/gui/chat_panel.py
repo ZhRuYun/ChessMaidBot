@@ -206,16 +206,18 @@ class ChatPanel(QWidget):
                 </div>
                 """
             else:
+                is_streaming = (role == "maid_stream")
                 md_html = markdown.markdown(
                     msg,
                     extensions=['fenced_code', 'tables']
                 )
+                stream_cursor = " <span style='color: #38bdf8;'>▋</span>" if is_streaming else ""
                 html = f"""
                 <div style='margin-bottom: 12px; text-align: left;'>
                     <div style='display: inline-block; max-width: 90%; background-color: {bg};
                                 color: {text_col}; border: 1px solid {border}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
                                 font-size: 13px; line-height: 1.6;'>
-                        <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}
+                        <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}{stream_cursor}
                     </div>
                 </div>
                 """
@@ -229,6 +231,21 @@ class ChatPanel(QWidget):
     def append_user_message(self, text: str):
         self._message_history.append(("user", text))
         self._render_all_messages()
+
+    def append_maid_chunk(self, chunk: str):
+        """流式追加女仆消息片段"""
+        if not self._message_history or self._message_history[-1][0] != "maid_stream":
+            self._message_history.append(("maid_stream", chunk))
+        else:
+            prev = self._message_history[-1][1]
+            self._message_history[-1] = ("maid_stream", prev + chunk)
+        self._render_all_messages()
+
+    def finalize_maid_stream(self, final_text: str):
+        """结束流式输出，转为正式 maid 消息"""
+        if self._message_history and self._message_history[-1][0] == "maid_stream":
+            self._message_history.pop()
+        self.append_maid_message(final_text)
 
     def append_maid_message(self, markdown_text: str):
         self._message_history.append(("maid", markdown_text))

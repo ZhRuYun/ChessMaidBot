@@ -23,7 +23,7 @@ import random
 import re
 import urllib.request
 import urllib.error
-from typing import Optional, Any
+from typing import Optional, Any, Callable, List, Dict
 
 import chess
 
@@ -95,15 +95,113 @@ class LLMAgent(ChessAgent):
 
     # ---------- ChessAgent 接口 ----------
 
-    def reply(self, request: AgentRequest) -> str:
-        """根据标准请求包调用 LLM API 并返回 Markdown 回复; API 不可用时回退"""
+    def _get_tools_definitions(self, request: AgentRequest) -> list[dict]:
+        """构造 OpenAI 标准 Tool Call / Function Calling 规范定义"""
+        if not request.tools:
+            return []
+        tools = []
+        if getattr(request.tools, "read_engine_state", None):
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "engine_analyze",
+                    "description": "调用 Stockfish 国际象棋引擎分析指定局面 FEN 或当前局面，获取最佳候选走法及评分。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fen": {"type": "string", "description": "待分析的局面 FEN 字符串，不传则默认当前棋盘局面"},
+                            "depth": {"type": "integer", "description": "搜索深度 (默认 12)", "default": 12},
+                            "multipv": {"type": "integer", "description": "多主变例分析条数 (1~3, 默认 2)", "default": 2}
+                        },
+                    }
+                }
+            })
+        if getattr(request.tools, "query_opening", None) or getattr(request.tools, "read_database", None):
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "query_opening_book",
+                    "description": "查询开局库获取当前或指定局面的开局名称、谱着走法及权重推荐。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fen": {"type": "string", "description": "待查询的局面 FEN 字符串，不传则默认当前棋盘局面"}
+                        }
+                    }
+                }
+            })
+        if getattr(request.tools, "query_history", None):
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "query_game_history",
+                    "description": "检索历史归档棋局及其总结，辅助复盘或对比历史走法。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "返回历史对局条数 (默认 3)", "default": 3}
+                        }
+                    }
+                }
+            })
+        if getattr(request.tools, "web_search", None):
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "search_chess_knowledge",
+                    "description": "联网搜索国际象棋知识、特级大师对局历史、战术术语或棋理理论。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "搜索关键词或问题"}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            })
+        return tools
+
+    def _execute_tool_call(self, request: AgentRequest, name: str, args: dict) -> str:
+        """执行具体的 Tool Function 并返回 JSON 字符串结果"""
+        tools = request.tools
+        if not tools:
+            return json.dumps({"error": "No tools available"})
+        try:
+            if name == "engine_analyze":
+                fen = args.get("fen") or request.snapshot.fen
+                depth = args.get("depth", 12)
+                multipv = args.get("multipv", 2)
+                if tools.read_engine_state:
+                    res = tools.read_engine_state("analyse", {"fen": fen, "depth": depth, "multipv": multipv})
+                    return json.dumps(res, ensure_ascii=False)
+            elif name == "query_opening_book":
+                fen = args.get("fen") or request.snapshot.fen
+                if getattr(tools, "query_opening", None):
+                    res = tools.query_opening(fen, 5)
+                    return json.dumps(res, ensure_ascii=False)
+                elif getattr(tools, "read_database", None):
+                    res = tools.read_database("opening", {"fen": fen, "limit": 5})
+                    return json.dumps(res, ensure_ascii=False)
+            elif name == "query_game_history":
+                limit = args.get("limit", 3)
+                if getattr(tools, "query_history", None):
+                    res = tools.query_history(limit, True)
+                    return json.dumps(res, ensure_ascii=False)
+            elif name == "search_chess_knowledge":
+                q = args.get("query", "")
+                if getattr(tools, "web_search", None) and q:
+                    res = tools.web_search(q)
+                    return json.dumps({"search_result": res}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return json.dumps({"error": f"Tool {name} not handled"}, ensure_ascii=False)
+
+    def reply(self, request: AgentRequest, on_chunk: Optional[Callable[[str], None]] = None) -> str:
+        """根据标准请求包调用 LLM API 并返回 Markdown 回复; 支持 Tool Calling 与流式回调; API 不可用时回退"""
         tool_logs: list[str] = []
         snap = request.snapshot
         is_game_over = bool(snap.game_over_reason)
-        # 根据局面特征判断需要调用的工具，而非每步全调
-        # 1. 处于开局阶段（走法栈较短或在开局库覆盖范围）时调用开局库
         should_query_opening = not is_game_over and len((snap.pgn or "").split()) <= 20
-        # 2. 对弈中需要深度分析时调用引擎评估（终局或开局前几步纯书手可不调或按需调）
         should_query_engine = not is_game_over
 
         if request.tools:
@@ -113,20 +211,60 @@ class LLMAgent(ChessAgent):
                 tool_logs.append("query_history")
             if should_query_engine and getattr(request.tools, "read_engine_state", None):
                 tool_logs.append("read_engine_state")
-            # web_search 仅在用户明确询问术语/棋手/战术理论或主动提问时使用
             if getattr(request.tools, "web_search", None) and any(k in request.user_message for k in ("搜索", "历史", "理论", "谁是", "介绍", "什么是")):
                 tool_logs.append("web_search")
 
-        # 若 API Key 为空, 直接回退
         if not self.api_key:
             res = self._fallback_reply(request)
-        else:
-            messages = self._build_messages(request, should_query_opening=should_query_opening, should_query_engine=should_query_engine)
-            try:
-                raw = self._call_chat_api(messages)
-                res = raw.strip()
-            except Exception:
-                res = self._fallback_reply(request)
+            if on_chunk:
+                on_chunk(res)
+            return res
+
+        messages = self._build_messages(request, should_query_opening=should_query_opening, should_query_engine=should_query_engine)
+        tool_defs = self._get_tools_definitions(request)
+
+        try:
+            # 首次调用: 允许模型进行 Tool Call (最多循环 2 轮)
+            for _ in range(2):
+                call_res = self._call_chat_api_raw(messages, tools=tool_defs if tool_defs else None, on_chunk=None)
+                msg = call_res.get("message", {})
+                tool_calls = msg.get("tool_calls")
+                if not tool_calls:
+                    # 无工具调用，直接输出最终内容
+                    final_content = msg.get("content") or ""
+                    if not final_content and on_chunk is None:
+                        final_content = self._fallback_reply(request)
+                    if on_chunk:
+                        # 如需流式呈现且刚才未流式输出，回调一次
+                        on_chunk(final_content)
+                    res = final_content.strip()
+                    if self.show_tool_records and tool_logs:
+                        res += f"\n\n*(工具调用记录: {', '.join(tool_logs)})*"
+                    return res
+
+                # 处理模型发起的 tool_calls
+                messages.append(msg)
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    fn_name = fn.get("name", "")
+                    try:
+                        fn_args = json.loads(fn.get("arguments", "{}"))
+                    except Exception:
+                        fn_args = {}
+                    tool_logs.append(f"ToolCall:{fn_name}")
+                    tool_out = self._execute_tool_call(request, fn_name, fn_args)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", f"call_{fn_name}"),
+                        "content": tool_out
+                    })
+
+            # 工具调用完成后获取最终回答 (开启流式渲染)
+            res = self._call_chat_api(messages, on_chunk=on_chunk).strip()
+        except Exception:
+            res = self._fallback_reply(request)
+            if on_chunk:
+                on_chunk(res)
 
         if self.show_tool_records and tool_logs:
             res += f"\n\n*(工具调用记录: {', '.join(tool_logs)})*"
@@ -151,8 +289,9 @@ class LLMAgent(ChessAgent):
 
         messages: list[dict] = [{"role": "system", "content": system_msg}]
 
-        # 透传历史对话
-        for turn in request.dialog_history:
+        # 透传历史对话 (限制最近 8 轮历史，防止长对局 Token 溢出)
+        trimmed_history = request.dialog_history[-8:] if len(request.dialog_history) > 8 else request.dialog_history
+        for turn in trimmed_history:
             role = turn.get("role", "user")
             content = turn.get("content", "")
             if role in ("user", "assistant", "system"):
@@ -212,6 +351,43 @@ class LLMAgent(ChessAgent):
             lines.append(f"```pgn\n{moves_only or pgn_text}\n```")
         return "\n".join(lines)
 
+    def _fetch_opening_context(self, request: AgentRequest) -> str:
+        """通过 AgentTools 主动查询开局库, 返回开局推荐走法或名称上下文"""
+        tools = request.tools
+        if not tools:
+            return ""
+        query_func = getattr(tools, "query_opening", None) or getattr(tools, "read_database", None)
+        if not query_func:
+            return ""
+
+        try:
+            if getattr(tools, "query_opening", None):
+                res = tools.query_opening(request.snapshot.fen, 5)
+            else:
+                res = tools.read_database("opening", {"fen": request.snapshot.fen, "limit": 5})
+            if not res or not isinstance(res, dict):
+                return ""
+            
+            lines = ["【开局库参考】"]
+            opening_name = res.get("opening_name") or res.get("name")
+            if opening_name:
+                lines.append(f"- 开局名称: {opening_name}")
+            moves = res.get("moves") or res.get("candidates") or []
+            if moves:
+                moves_desc = []
+                for m in moves[:4]:
+                    if isinstance(m, dict):
+                        uci = m.get("uci") or m.get("move")
+                        weight = m.get("weight") or m.get("score")
+                        moves_desc.append(f"{uci}(权重:{weight})" if weight else str(uci))
+                    elif isinstance(m, str):
+                        moves_desc.append(m)
+                if moves_desc:
+                    lines.append(f"- 推荐谱着: {', '.join(moves_desc)}")
+            return "\n".join(lines) if len(lines) > 1 else ""
+        except Exception:
+            return ""
+
     def _fetch_engine_eval(self, request: AgentRequest) -> str:
         """通过 AgentTools 主动读取 Stockfish 引擎评估, 返回上下文文本块
 
@@ -261,13 +437,44 @@ class LLMAgent(ChessAgent):
 
     # ---------- API 通信 ----------
 
-    def _call_chat_api(self, messages: list[dict], max_retries: int = 2) -> str:
+    def _call_chat_api_raw(self, messages: list[dict], tools: Optional[list] = None, on_chunk: Optional[Callable[[str], None]] = None) -> dict:
+        """底层 Chat Completions 原始调用，返回完整 choice 字典 (包含 tool_calls / message 等)"""
+        url = self._chat_endpoint()
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": min(self.max_tokens, 1500),
+            "temperature": 0.6,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        if self.reasoning_effort and self.reasoning_effort not in ("auto", "none", ""):
+            payload["reasoning_effort"] = self.reasoning_effort
+
+        data = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "ChessMaidBot/1.0",
+            "Connection": "keep-alive",
+        }
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            body = resp.read().decode("utf-8")
+        result = json.loads(body)
+        choices = result.get("choices", [])
+        if not choices:
+            raise ValueError("API 返回空 choices")
+        return choices[0]
+
+    def _call_chat_api(self, messages: list[dict], max_retries: int = 2, on_chunk: Optional[Callable[[str], None]] = None) -> str:
         """调用 OpenAI 兼容 /v1/chat/completions 接口, 支持指数退避重试 (支持 stream 与 reasoning_effort)"""
         url = self._chat_endpoint()
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": min(self.max_tokens, 800),  # 节约 token 上限
+            "max_tokens": min(self.max_tokens, 1500),
             "temperature": 0.6,
         }
 
@@ -275,7 +482,8 @@ class LLMAgent(ChessAgent):
         if self.reasoning_effort and self.reasoning_effort not in ("auto", "none", ""):
             payload["reasoning_effort"] = self.reasoning_effort
 
-        if self.stream:
+        use_stream = self.stream or (on_chunk is not None)
+        if use_stream:
             payload["stream"] = True
 
         data = json.dumps(payload).encode("utf-8")
@@ -291,8 +499,8 @@ class LLMAgent(ChessAgent):
             try:
                 req = urllib.request.Request(url, data=data, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    if self.stream:
-                        return self._parse_stream_response(resp)
+                    if use_stream:
+                        return self._parse_stream_response(resp, on_chunk=on_chunk)
                     body = resp.read().decode("utf-8")
 
                 result = json.loads(body)
@@ -302,6 +510,8 @@ class LLMAgent(ChessAgent):
                 content = choices[0].get("message", {}).get("content", "")
                 if not content.strip():
                     raise ValueError("API 返回空内容")
+                if on_chunk:
+                    on_chunk(content)
                 return content
             except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as e:
                 last_error = e
@@ -312,7 +522,7 @@ class LLMAgent(ChessAgent):
 
         raise last_error or RuntimeError("LLM API 调用失败")
 
-    def _parse_stream_response(self, resp) -> str:
+    def _parse_stream_response(self, resp, on_chunk: Optional[Callable[[str], None]] = None) -> str:
         """解析 SSE (Server-Sent Events) 流式响应数据"""
         chunks = []
         for line_bytes in resp:
@@ -331,6 +541,8 @@ class LLMAgent(ChessAgent):
                         part = delta.get("content", "")
                         if part:
                             chunks.append(part)
+                            if on_chunk:
+                                on_chunk(part)
                 except Exception:
                     continue
         full_content = "".join(chunks).strip()
@@ -428,9 +640,14 @@ class LLMAgent(ChessAgent):
 
         # 构建获取单步走法的专属 prompt
         fen = request.snapshot.fen
+        board = chess.Board(fen)
+        legal_uci_list = [m.uci() for m in board.legal_moves]
+        legal_san_list = [board.san(m) for m in board.legal_moves]
+
         prompt = (
             f"你现在作为国际象棋陪练选手执棋。当前局面 FEN 为: `{fen}`。\n"
-            "请严格以纯文本格式输出一步最佳合法着法（必须为 UCI 格式，如 'e7e5', 'g1f3'，严禁输出任何额外多余文字、标点或解释）。"
+            f"当前所有合法走法列表: {', '.join(legal_uci_list[:30])}\n"
+            "请严格以纯文本格式输出一步最佳合法着法（必须为 UCI 格式如 'e7e5' 或 SAN 格式如 'Nf3'，严禁输出任何额外多余文字、标点或解释）。"
         )
         move_req = AgentRequest(
             user_message=prompt,
@@ -443,8 +660,7 @@ class LLMAgent(ChessAgent):
         if self.api_key:
             try:
                 reply = self.reply(move_req)
-                # 从回复中提取第一个合法的 UCI 着法
-                board = chess.Board(fen)
+                # 1. 优先尝试从回复中提取合法的 UCI 着法
                 matches = re.findall(r"\b([a-h][1-8][a-h][1-8][qrbn]?)\b", reply.lower())
                 for m in matches:
                     try:
@@ -453,6 +669,14 @@ class LLMAgent(ChessAgent):
                             return m
                     except Exception:
                         continue
+                # 2. 尝试从回复中提取合法的 SAN 记谱
+                for san in legal_san_list:
+                    if san.lower() in reply.lower():
+                        try:
+                            move = board.parse_san(san)
+                            return move.uci()
+                        except Exception:
+                            continue
             except Exception:
                 pass
 
@@ -466,7 +690,6 @@ class LLMAgent(ChessAgent):
                 pass
 
         # 随机合法着法兜底
-        board = chess.Board(fen)
         legal_moves = list(board.legal_moves)
         if legal_moves:
             return random.choice(legal_moves).uci()
