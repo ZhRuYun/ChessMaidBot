@@ -18,6 +18,7 @@ class PositionSnapshot:
     in_check: bool
     last_move_san: Optional[str] = None
     game_over_reason: str = ""
+    player_side: Optional[str] = None
 
 
 @dataclass

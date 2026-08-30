@@ -58,12 +58,14 @@ class TestAgents(unittest.TestCase):
             turn="Black",
             legal_move_count=20,
             in_check=False,
-            last_move_san='e4'
+            last_move_san='e4',
+            player_side='white'
         )
         prompt = PromptBuilder.build_custom_prompt(snapshot, triggers, is_auto_move=False, extra_note="What should I do?")
         self.assertIn("e4", prompt)
         self.assertIn("What should I do?", prompt)
         self.assertIn("BEGIN_TRUSTED_CHESS_DATA", prompt)
+        self.assertIn("执白方", prompt)
 
     def test_stream_parser_and_memory(self):
         chunks = []

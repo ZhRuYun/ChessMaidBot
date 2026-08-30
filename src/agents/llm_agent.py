@@ -328,7 +328,7 @@ class LLMAgent(ChessAgent):
                 tool_calls = msg.get("tool_calls")
                 if not tool_calls:
                     final_content = msg.get("content") or msg.get("reasoning_content") or ""
-                    if not final_content and on_chunk is None:
+                    if not final_content:
                         final_content = self._fallback_reply(request)
                     if on_chunk:
                         on_chunk(final_content)
@@ -462,8 +462,10 @@ class LLMAgent(ChessAgent):
     def _build_context_block(self, request: AgentRequest) -> str:
         """构建只包含纯净局面快照的上下文块 (PGN 唯一来源，仅保留尾部窗口)"""
         snap = request.snapshot
+        player_side_str = f"执{'白方' if snap.player_side == 'white' else '黑方'}" if snap.player_side else "执白方"
         lines = [
             "【当前棋盘基础快照】",
+            f"- 玩家执棋方 (你的主人): {player_side_str}",
             f"- FEN: `{snap.fen}`",
             f"- 当前行动方: {snap.turn}",
             f"- 合法走法数: {snap.legal_move_count}",

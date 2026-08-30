@@ -62,6 +62,7 @@ class PromptBuilder:
         requirements_text = "\n".join(sections)
 
         trigger_source = "【玩家落子自动教学触发】" if is_auto_move else "【主动询问女仆教学指导】"
+        player_side_str = f"执{'白方' if snapshot.player_side == 'white' else '黑方'}" if snapshot.player_side else "执白方"
         mode_text = f"\n- 当前游戏模式: {game_mode_name}" if game_mode_name else ""
         note_text = f"\n补充说明: {extra_note}" if extra_note else ""
 
@@ -70,6 +71,7 @@ class PromptBuilder:
 
 <!-- BEGIN_TRUSTED_CHESS_DATA -->
 【棋盘现状】{mode_text}
+- 玩家执棋方 (你的主人): {player_side_str}
 - 局势状态: {"已终局 (" + snapshot.game_over_reason + ")" if snapshot.game_over_reason else "对弈中"}
 - 当前行动方: {snapshot.turn}
 - 最近一步: {snapshot.last_move_san or "开局初始"}

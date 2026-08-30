@@ -561,6 +561,7 @@ class GameController(QObject):
             in_check=self.board_state.is_check(),
             last_move_san=self.history.last_san(),
             game_over_reason=status["reason"] if status["is_over"] else "",
+            player_side=self.modes.player_side,
         )
 
     def _agent_query_opening(self, fen: Optional[str] = None, limit: int = 5, *, base_fen: str = "") -> Dict[str, Any]:
