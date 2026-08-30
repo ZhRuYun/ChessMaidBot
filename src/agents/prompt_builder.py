@@ -32,32 +32,31 @@ class PromptBuilder:
 
         if triggers.eval_current_position:
             sections.append(
-                "1. **当下局面评估**：精准剖析子力平衡、兵形结构、王的安全度与关键格控制，明确优劣势对比。"
+                "1. **当下局面评估**：剖析子力、兵形与关键格控制。"
             )
 
         if not snapshot.game_over_reason:
             sections.append(
-                "2. **建议着法**：必须提供当前行动方最值得考虑的 3 个合法候选着法；每个候选只用一行说明核心意图、主要后续与必要防范。"
+                "2. **建议着法**：提供当前行动方最值得考虑的 2~3 个合法候选着法及简要意图。"
             )
 
         if triggers.eval_history_moves:
             if snapshot.last_move_san:
                 sections.append(
-                    f"3. **历史走法评估 (失误预警)**：重点点评最近一手 `{snapshot.last_move_san}`，指出是否存在战术漏洞、疑问手或亮眼战术构思。"
+                    f"3. **历史走法评估**：点评最近一手 `{snapshot.last_move_san}` 是否存在战术漏洞或亮点。"
                 )
             else:
                 sections.append(
-                    "3. **历史走法评估 (失误预警)**：评估当前开局走法是否符合出子原则与中心争夺。"
+                    "3. **历史走法评估**：评估开局是否符合出子与争夺中心原则。"
                 )
 
         if triggers.game_over_summary and snapshot.game_over_reason:
             sections.append(
-                f"4. **棋局结束总结 (赛后复盘)**：对局已终局（{snapshot.game_over_reason}），请进行全面战术复盘，总结胜负手与关键转折局面。"
+                f"4. **棋局结束总结**：对局已终局（{snapshot.game_over_reason}），请简要复盘胜负手与关键转折。"
             )
 
         if not sections:
-            # 当所有子开关都未勾选时的兜底通用分析要求
-            sections.append("请结合当前棋盘局势，为主人提供精辟的棋理剖析与关键战略建议。")
+            sections.append("请结合当前棋盘局势，为主人提供精炼的战术分析与建议。")
 
         requirements_text = "\n".join(sections)
 

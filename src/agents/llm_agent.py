@@ -155,9 +155,11 @@ class LLMAgent(ChessAgent):
         env_reasoning = os.environ.get("LLM_REASONING_EFFORT", "auto")
         self.reasoning_effort = (reasoning_effort if reasoning_effort is not None else env_reasoning).strip().lower()
 
-        env_stream = os.environ.get("LLM_STREAM", "false").strip().lower() in ("true", "1", "yes")
+        env_stream = os.environ.get("LLM_STREAM", "true").strip().lower() in ("true", "1", "yes")
         self.stream = stream if stream is not None else env_stream
         self.show_tool_records = False
+        # 默认禁用每步自动 Tool Calling，单次直出 Prompt 教学，大幅降低首字延迟与网络开销
+        self.enable_tools = False
 
         # 人设唯一来源: prompt_registry -> config.DEFAULT_MAID_PERSONA
         self.persona_prompt = persona_prompt or prompt_registry.render("persona_default")
@@ -186,7 +188,7 @@ class LLMAgent(ChessAgent):
 
     def _get_tools_definitions(self, request: AgentRequest) -> list[dict]:
         """构造 OpenAI 标准 Tool Call 规范定义"""
-        if not request.tools:
+        if not getattr(self, "enable_tools", False) or not request.tools:
             return []
         tools = []
         if getattr(request.tools, "read_engine_state", None):
@@ -322,7 +324,11 @@ class LLMAgent(ChessAgent):
                 if is_cancelled and is_cancelled():
                     return ""
 
-                call_res = self._call_chat_api_raw(messages, tools=tool_defs if tool_defs else None)
+                # 若未开启工具调用，直接进入流式/单次对话响应
+                if not tool_defs:
+                    break
+
+                call_res = self._call_chat_api_raw(messages, tools=tool_defs)
                 msg = call_res.get("message", {})
                 tool_calls = msg.get("tool_calls")
                 if not tool_calls:

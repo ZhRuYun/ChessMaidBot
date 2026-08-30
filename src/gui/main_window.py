@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
                 api_key=llm_cfg.get("api_key") or None,
                 model=llm_cfg.get("model") or None,
                 reasoning_effort=llm_cfg.get("reasoning_effort") or None,
-                stream=llm_cfg.get("stream", False),
+                stream=llm_cfg.get("stream", True),
                 persona_prompt=self.current_persona,
             )
         else:
@@ -738,7 +738,7 @@ class MainWindow(QMainWindow):
             api_key=new_config.get("api_key") or None,
             model=new_config.get("model") or None,
             reasoning_effort=new_config.get("reasoning_effort") or None,
-            stream=new_config.get("stream", False),
+            stream=new_config.get("stream", True),
             persona_prompt=self.current_persona,
         )
         if "show_tool_records" in new_config:
@@ -898,7 +898,7 @@ class MainWindow(QMainWindow):
           - 短期记忆只写入意图标签 (memory_label) 而非含完整 PGN 的提示词
           - trusted=False 时用户原文以 <untrusted_user_input> 包裹发送, 防 Prompt 注入
         """
-        # 取消上一个在途的 LLM 线程
+        # 取消上一个在途的 LLM 线程 (旧线程按代际丢弃)
         if self._llm_thread is not None and self._llm_thread.isRunning():
             self._llm_thread.cancel()
 
@@ -916,6 +916,7 @@ class MainWindow(QMainWindow):
                 logger.debug("语义缓存命中: %s", cache_key[:12])
                 self.short_memory.add_turn(role="user", content=label, fen=fen)
                 self.short_memory.add_turn(role="assistant", content=cached, fen=fen)
+                self.chat_panel.set_loading(False)
                 self.chat_panel.append_maid_message(cached)
                 return
 
