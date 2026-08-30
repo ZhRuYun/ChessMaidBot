@@ -61,8 +61,13 @@ class PromptBuilder:
 
         requirements_text = "\n".join(sections)
 
-        trigger_source = "【玩家落子自动教学触发】" if is_auto_move else "【主动询问女仆教学指导】"
-        player_side_str = f"执{'白方' if snapshot.player_side == 'white' else '黑方'}" if snapshot.player_side else "执白方"
+        trigger_source = "【自动教学触发】" if is_auto_move else "【主动询问女仆教学指导】"
+        if snapshot.player_side == "black":
+            player_side_str = "执黑方（先手白方为对手/引擎，后手黑方为你侍奉的主人）"
+        elif snapshot.player_side == "white":
+            player_side_str = "执白方（先手白方为你侍奉的主人，后手黑方为对手/引擎）"
+        else:
+            player_side_str = "执白方"
         mode_text = f"\n- 当前游戏模式: {game_mode_name}" if game_mode_name else ""
         note_text = f"\n补充说明: {extra_note}" if extra_note else ""
 

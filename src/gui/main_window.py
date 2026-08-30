@@ -379,7 +379,7 @@ class MainWindow(QMainWindow):
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
         """
-        若教学模块打开 (master_enabled 为 True)，人类玩家走一步棋，LLM 保证回应一步教学
+        若教学模块打开 (master_enabled 为 True)，局面每发生一次变更 (玩家或引擎走棋)，LLM 均回应教学指导
         """
         if self._online_client and self.controller.modes.mode == GameMode.ONLINE_PVP:
             # 判断这步是否是自己走的，如果是则同步发送给服务端
@@ -391,16 +391,16 @@ class MainWindow(QMainWindow):
         if not triggers.master_enabled or not self._has_configured_llm_api():
             return
 
-        # 针对人类玩家本人的走棋触发教学指导
+        # 判定刚走这一步棋的是玩家还是引擎/对手
+        mover_desc = "棋手"
         if self.controller.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
             player_is_white = (self.controller.modes.player_side == "white")
-            if was_white != player_is_white:
-                return
+            mover_desc = "你的主人（玩家）" if was_white == player_is_white else "对手（引擎/AI）"
         elif self.controller.modes.mode == GameMode.ONLINE_PVP:
-            if not is_my_move:
-                return
+            is_my_move = (was_white and self._online_client and self._online_client.my_side == "white") or (not was_white and self._online_client and self._online_client.my_side == "black")
+            mover_desc = "你的主人（玩家）" if is_my_move else "对手（网络玩家）"
 
-        # 构建内部教学 prompt，玩家走一步棋即回应一步
+        # 构建内部教学 prompt，局面每走一步棋即回应一步
         snapshot = self.controller.get_snapshot()
         model_name = getattr(self.agent, "model", "")
         cache_key = SemanticCache.make_key(
@@ -414,12 +414,12 @@ class MainWindow(QMainWindow):
             snapshot=snapshot,
             triggers=triggers,
             is_auto_move=True,
-            extra_note=f"玩家刚刚走出了着法 `{san}`。请立即结合当下棋盘局势与失误预警，给出一对一陪练指导。",
+            extra_note=f"刚刚【{mover_desc}】走出了着法 `{san}`。请立即结合当下棋盘局势与失误预警，为主人提供针对性的局势分析与后续指导建议。",
             game_mode_name=self.controller.modes.mode.value,
         )
         self._dispatch_llm_request(
             custom_prompt,
-            memory_label=f"[落子自动教学] 最近一步 {san}",
+            memory_label=f"[{mover_desc}走棋] 最近一步 {san}",
             cache_key=cache_key,
         )
 

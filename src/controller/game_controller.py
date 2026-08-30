@@ -218,8 +218,8 @@ class GameController(QObject):
         if generation != self._engine_generation:
             return  # 过期结果 (对局已被重置/悔棋), 直接丢弃
         self.engine_thinking_changed.emit(False)
-        if source != "llm":
-            # LLM 不可用降级代走: 明确向 UI 披露, 避免用户误认为 LLM 在走棋
+        if self.modes.mode == GameMode.VS_MAID_LLM and source != "llm":
+            # 仅在 VS_MAID_LLM 模式下且非 LLM 给出着法时，提示降级代走
             logger.warning("LLM 走棋不可用，本步由 %s 代走", source)
             self.llm_fallback_used.emit(source)
         try:

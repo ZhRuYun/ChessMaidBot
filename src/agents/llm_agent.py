@@ -413,7 +413,12 @@ class LLMAgent(ChessAgent):
     def _build_context_block(self, request: AgentRequest) -> str:
         """构建只包含纯净局面快照的上下文块 (PGN 唯一来源，仅保留尾部窗口)"""
         snap = request.snapshot
-        player_side_str = f"执{'白方' if snap.player_side == 'white' else '黑方'}" if snap.player_side else "执白方"
+        if snap.player_side == "black":
+            player_side_str = "执黑方（先手白方为对手/引擎，后手黑方为你侍奉的主人）"
+        elif snap.player_side == "white":
+            player_side_str = "执白方（先手白方为你侍奉的主人，后手黑方为对手/引擎）"
+        else:
+            player_side_str = "执白方"
         lines = [
             "【当前棋盘基础快照】",
             f"- 玩家执棋方 (你的主人): {player_side_str}",
