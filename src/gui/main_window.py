@@ -337,7 +337,6 @@ class MainWindow(QMainWindow):
             persona_prompt=self.current_persona,
             dialog_history=self.short_memory.get_messages(),
         )
-        req.two_stage = True  # 教练结构化分析 -> 女仆人格化改写
         return self.agent.reply(req)
 
     # ---------- 调度层信号处理 ----------

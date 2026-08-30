@@ -23,7 +23,6 @@ from typing import Optional, Any, Callable, List, Dict
 import chess
 
 from .base import AgentRequest, ChessAgent
-from .multi_role import MultiRoleCoordinator
 from . import prompt_registry
 
 logger = logging.getLogger("chessmaid.llm")
@@ -378,54 +377,6 @@ class LLMAgent(ChessAgent):
         if self.show_tool_records and tool_logs:
             res += f"\n\n*(工具调用记录: {', '.join(tool_logs)})*"
         return res
-
-    # ---------- 两段式流水线 (Coach -> Maid) ----------
-
-    def _reply_two_stage(
-        self,
-        request: AgentRequest,
-        on_chunk: Optional[Callable[[str], None]] = None,
-        is_cancelled: Optional[Callable[[], bool]] = None,
-    ) -> Optional[str]:
-        """教练结构化分析 + 女仆人格化改写; 任一阶段失败返回 None 走单段回退"""
-        if not self.api_key:
-            return None
-        try:
-            if is_cancelled and is_cancelled():
-                return None
-
-            # 第一阶段: 教练 JSON 结构化分析
-            coach_messages, schema_text = MultiRoleCoordinator.coach_messages(request.snapshot.fen)
-            payload = {
-                "model": self.model,
-                "messages": coach_messages,
-                "temperature": 0.2,
-                "max_tokens": 600,
-                "response_format": {"type": "json_object"},
-            }
-            res = self._post_json_payload(payload)
-            self._record_usage(res)
-            choices = res.get("choices", [])
-            if not choices:
-                return None
-            coach_content = choices[0].get("message", {}).get("content", "")
-            coach_json = _clean_json_content(coach_content)
-            json.loads(coach_json)  # 校验合法 JSON
-
-            if is_cancelled and is_cancelled():
-                return None
-
-            # 第二阶段: 女仆人格化改写
-            rewrite_messages = MultiRoleCoordinator.maid_messages(
-                self.persona_prompt, coach_json, request.snapshot
-            )
-            final = self._call_chat_api(
-                rewrite_messages, on_chunk=on_chunk, is_cancelled=is_cancelled
-            ).strip()
-            return final or None
-        except Exception as e:
-            logger.warning("两段式流水线阶段失败: %s", e, exc_info=True)
-            return None
 
     def _build_messages(self, request: AgentRequest) -> list[dict]:
         """组装具备防注入与上下文隔离的消息列表"""
@@ -846,8 +797,6 @@ class LLMAgent(ChessAgent):
                     if time.monotonic() >= deadline:
                         raise LLMTransportError("总超时预算耗尽", retryable=False)
                     time.sleep(min(0.05, max(0.005, sleep_end - time.monotonic())))
-
-        raise last_error or RuntimeError("LLM API 调用失败")
 
         raise last_error or RuntimeError("LLM API 调用失败")
 

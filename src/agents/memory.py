@@ -49,8 +49,6 @@ class PlayerProfile:
     losses: int = 0
     draws: int = 0
     favorite_openings: Dict[str, int] = field(default_factory=dict)
-    frequent_blunders: Dict[str, int] = field(default_factory=dict)
-    playstyle_tag: str = "平衡型"
     weakness_notes: List[str] = field(default_factory=list)
     coach_advices: List[str] = field(default_factory=list)
 
@@ -65,15 +63,13 @@ class PlayerProfile:
             losses=data.get("losses", 0),
             draws=data.get("draws", 0),
             favorite_openings=data.get("favorite_openings", {}),
-            frequent_blunders=data.get("frequent_blunders", {}),
-            playstyle_tag=data.get("playstyle_tag", "平衡型"),
             weakness_notes=data.get("weakness_notes", []),
             coach_advices=data.get("coach_advices", []),
         )
 
 
 class LongTermMemory:
-    """长期画像记忆：跨对局记录玩家风格与弱点 (支持 LLM 总结蒸馏)"""
+    """长期基础档案：记录玩家战绩、常用开局与关键总结"""
 
     def __init__(self, profile_path: Optional[Path] = None):
         self.profile_path = profile_path or (DATA_DIR / "player_profile.json")
@@ -98,19 +94,19 @@ class LongTermMemory:
             logger.error("长期画像持久化保存失败: %s", e, exc_info=True)
 
     def record_distilled_insight(self, weakness: Optional[str] = None, advice: Optional[str] = None):
-        """记录从终局 Coach 复盘中蒸馏出的玩家弱点与针对性指导"""
+        """记录从终局复盘中提取的弱点与建议"""
         if weakness and weakness.strip():
             w = weakness.strip()
             if w not in self.profile.weakness_notes:
                 self.profile.weakness_notes.append(w)
-                if len(self.profile.weakness_notes) > 5:
-                    self.profile.weakness_notes = self.profile.weakness_notes[-5:]
+                if len(self.profile.weakness_notes) > 3:
+                    self.profile.weakness_notes = self.profile.weakness_notes[-3:]
         if advice and advice.strip():
             a = advice.strip()
             if a not in self.profile.coach_advices:
                 self.profile.coach_advices.append(a)
-                if len(self.profile.coach_advices) > 5:
-                    self.profile.coach_advices = self.profile.coach_advices[-5:]
+                if len(self.profile.coach_advices) > 3:
+                    self.profile.coach_advices = self.profile.coach_advices[-3:]
         self.save()
 
     def record_game_result(self, result: str, opening: Optional[str] = None, blunders: Optional[List[str]] = None):
@@ -125,33 +121,22 @@ class LongTermMemory:
         if opening:
             self.profile.favorite_openings[opening] = self.profile.favorite_openings.get(opening, 0) + 1
 
-        if blunders:
-            for b in blunders:
-                self.profile.frequent_blunders[b] = self.profile.frequent_blunders.get(b, 0) + 1
-
-        self._update_playstyle()
         self.save()
 
-    def _update_playstyle(self):
-        blunder_count = sum(self.profile.frequent_blunders.values())
-        if self.profile.total_games >= 3:
-            if blunder_count / max(1, self.profile.total_games) > 2.5:
-                self.profile.playstyle_tag = "激进易漏防型"
-            else:
-                self.profile.playstyle_tag = "沉稳战术型"
-
     def get_summary_prompt(self) -> str:
-        """生成供 LLM 注入的玩家长期画像上下文"""
+        """生成供 LLM 注入的精简玩家档案 (若无记录则返回空，避免无意义注入)"""
+        if self.profile.total_games == 0 and not self.profile.weakness_notes and not self.profile.coach_advices:
+            return ""
+
         fav_ops = sorted(self.profile.favorite_openings.items(), key=lambda x: x[1], reverse=True)[:2]
         fav_ops_str = ", ".join([f"{k}({v}次)" for k, v in fav_ops]) if fav_ops else "暂无"
         lines = [
-            "【主人对弈画像档案】",
+            "【主人历史战绩档案】",
             f"- 总对局: {self.profile.total_games} 局 (胜: {self.profile.wins}, 负: {self.profile.losses}, 和: {self.profile.draws})",
-            f"- 棋风标签: {self.profile.playstyle_tag}",
             f"- 偏好开局: {fav_ops_str}"
         ]
         if self.profile.weakness_notes:
-            lines.append(f"- 历史暴露弱点: {'; '.join(self.profile.weakness_notes[-2:])}")
+            lines.append(f"- 历史失误提醒: {'; '.join(self.profile.weakness_notes[-2:])}")
         if self.profile.coach_advices:
-            lines.append(f"- 教练重点建议: {'; '.join(self.profile.coach_advices[-2:])}")
+            lines.append(f"- 历史复盘建议: {'; '.join(self.profile.coach_advices[-2:])}")
         return "\n".join(lines)

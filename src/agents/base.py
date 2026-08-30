@@ -51,8 +51,6 @@ class AgentRequest:
     game_mode: Optional[str] = None
     # False 表示 user_message 为用户自由输入原文, 发送时需包裹 <untrusted_user_input> 防注入标记
     trust_user_message: bool = True
-    # True 时启用两段式流水线: 教练结构化分析 -> 女仆人格化改写
-    two_stage: bool = False
     # 玩家长期画像摘要 (若注入)
     player_profile_summary: Optional[str] = None
 

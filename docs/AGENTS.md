@@ -15,16 +15,15 @@ src/agents/
 ├── base.py            # Agent 抽象基类 (ChessAgent)、请求结构体 (AgentRequest)、局面快照 (PositionSnapshot) 与工具定义 (AgentTools)
 ├── llm_agent.py       # 真实 LLM API 接入实现 (结构化输出+自纠错 / HTTP 错误分类退避 / 流式自愈 / Tool Calling / 防注入 / 用量统计)
 ├── echo_agent.py      # 本地降级回退 Agent
-├── memory.py          # 双层记忆系统 (ShortTermMemory 滑动上下文 + LongTermMemory 玩家画像)
-├── multi_role.py      # 两段式流水线 (CoachRole 结构化分析 + MaidPersonaRole 人格润色 + MultiRoleCoordinator 编排)
-├── prompt_registry.py # Prompt 模板版本化注册表 (人设/护栏/教学规则/走法决策/两段式模板)
+├── memory.py          # 记忆系统 (ShortTermMemory 滑动上下文 + LongTermMemory 玩家基础档案)
+├── prompt_registry.py # Prompt 模板版本化注册表 (人设/护栏/教学规则/走法决策)
 ├── semantic_cache.py  # 语义缓存 (同局面+同开关确定性请求 LRU 复用回复)
 └── prompt_builder.py  # 教学提示词动态装配器 (内置防注入隔离护栏)
 ```
 
 ---
 
-## 2. 长短期双层记忆系统 (Memory System)
+## 2. 记忆系统 (Memory System)
 
 ### 2.1 短期工作记忆 (`ShortTermMemory`)
 - **定位**：对局内的短期上下文滑动窗口。
@@ -33,16 +32,14 @@ src/agents/
   - 每次组装 `AgentRequest` 时将历史记录注入 `dialog_history`，彻底解决多轮追问上下文断链问题。
   - 新对局开始（`on_game_reset`）时自动清空工作记忆。
 
-### 2.2 长期画像记忆 (`LongTermMemory`)
-- **定位**：跨对局的玩家对弈画像与成长档案。
+### 2.2 长期基础档案 (`LongTermMemory`)
+- **定位**：跨对局的玩家基础战绩档案。
 - **持久化路径**：`data/player_profile.json`。
 - **追踪指标**：
-  - 总对局数、胜率分布（胜/负/和）。
-  - 偏好开局统计（如 `Sicilian Defense: 12次`）。
-  - 高频失误走法与战术漏洞统计。
-  - 自动打标棋风标签（如“沉稳战术型”、“激进易漏防型”）。
-  - 终局 LLM 复盘战术漏洞与教练针对性建议蒸馏记录（`record_distilled_insight`）。
-- **注入方式**：在终局 Coach Mode 复盘或特定教学提问时，通过 `get_summary_prompt()` 注入玩家档案与历史暴露弱点，实现真正的主仆陪伴成长感。
+  - 总对局数、胜/负/和基础统计。
+  - 常用开局统计（如 `Sicilian Defense: 12次`）。
+  - 终局精简战术漏洞与针对性建议（`record_distilled_insight`）。
+- **注入方式**：在对局提问或复盘时，通过 `get_summary_prompt()` 注入极简玩家档案，保持 Prompt 紧凑高效。
 
 ---
 
@@ -116,16 +113,15 @@ src/agents/
 
 ---
 
-## 6. HTTP 传输、弹性流式与多角色协同
+## 6. HTTP 传输、弹性流式与高响应性架构
 
 1. **`ResilientStreamParser`**：
    - 内置 UTF-8 增量解码器，彻底杜绝 256 字节分片截断多字节中文乱码（U+FFFD）。
    - 双缓冲 SSE 流式解析，实时过滤 `data: [DONE]`，兼容 Thinking/Reasoning 思考字段提取。
    - 具备代码块自愈闭合能力（奇数个 ` ``` ` 自动在尾部补齐）。
    - 支持通过 `is_cancelled` 标志在玩家快速下子时即时中断在途流。
-2. **多角色协同与单段精准复盘**：
-   - 精简冗余二次网络调用，统一采用单段高质量 Prompt，降低 50% 首字延迟。
-   - `local_compose` 提供零网络降级组合。
+2. **单段高质量 Prompt 架构**：
+   - 移除冗余的多阶段二次网络往返，统一采用单段结构化 Prompt，首字响应延迟降低 50% 以上，避免二次网络调用中途失败。
 3. **HTTP 传输韧性**：
    - 401/403 等客户端错误立即失败不重试；429 按 `Retry-After`、5xx/网络异常指数退避（支持可中断 sleep）。
    - 流式已推送内容后中断不再重试（杜绝 UI 重复输出）；全程总 45s deadline 超时。
