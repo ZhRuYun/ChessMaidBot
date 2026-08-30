@@ -10,14 +10,19 @@ Stockfish 本质是由 stdin/stdout 控制的命令行程序, 本类封装其通
 强度调节支持:
     - 官方 Skill Level (0-20)
     - 目标 Elo 评分 (UCI_LimitStrength + UCI_Elo 1320~3190)
+
+性能优化:
+    - SharedEngine / shared_engine: 进程级共享引擎客户端池 (懒启动 + 线程互斥),
+      避免每次走棋/分析都重新拉起 Stockfish 进程 (NNUE 权重加载耗时数百毫秒)
 """
+import subprocess
+import threading
 from pathlib import Path
 from typing import Optional, Dict, List
 
 from ..config import (
     ENGINE_PATH,
     STOCKFISH_DEFAULT_SKILL,
-    STOCKFISH_DEFAULT_ELO,
     STOCKFISH_MIN_ELO,
     STOCKFISH_MAX_ELO,
 )
@@ -48,7 +53,6 @@ class StockfishClient:
             return
         if not self.available:
             raise StockfishError(f"未找到 Stockfish 引擎: {self.binary_path}")
-        import subprocess
         self._proc = subprocess.Popen(
             [str(self.binary_path)],
             stdin=subprocess.PIPE,
@@ -201,3 +205,51 @@ class StockfishClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.quit()
         return False
+
+
+class SharedEngine:
+    """进程级共享 Stockfish 客户端 (懒启动 + 线程安全互斥)
+
+    目的: 复用同一个引擎子进程, 避免「每步棋/每次分析重新拉起进程 + 加载 NNUE」
+   带来的数百毫秒级开销。所有调用在互斥锁内串行执行, 保证 UCI 协议不发生交错。
+
+    注意: 使用方严禁在持有锁期间被强制终止 (terminate), 否则锁将永久悬挂;
+    应通过「代际 (generation) 丢弃」机制让过期结果自然失效。
+    """
+
+    def __init__(self, binary_path: Optional[Path] = None):
+        self._lock = threading.Lock()
+        self._client: Optional[StockfishClient] = None
+        self._binary_path = binary_path
+
+    def call(self, fn):
+        """在互斥锁内以已启动的客户端执行 fn(client) 并返回其结果。
+
+        任何异常都会销毁当前客户端, 确保下一次调用从干净状态重新启动。
+        """
+        with self._lock:
+            if self._client is None:
+                self._client = StockfishClient(binary_path=self._binary_path)
+            try:
+                self._client.start()
+                return fn(self._client)
+            except Exception:
+                self._destroy_locked()
+                raise
+
+    def reset(self):
+        """强制销毁当前客户端 (调用方线程被强停等导致协议失步时使用)"""
+        with self._lock:
+            self._destroy_locked()
+
+    def _destroy_locked(self):
+        if self._client is not None:
+            try:
+                self._client.quit()
+            except Exception:
+                pass
+            self._client = None
+
+
+# 全局共享引擎实例: 调度层 (EngineWorker / 求和评估 / Agent 工具) 统一复用
+shared_engine = SharedEngine()

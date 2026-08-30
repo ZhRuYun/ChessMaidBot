@@ -19,9 +19,13 @@
 """
 import json
 import os
+import random
+import re
 import urllib.request
 import urllib.error
 from typing import Optional, Any
+
+import chess
 
 from .base import AgentRequest, ChessAgent, PositionSnapshot
 
@@ -336,14 +340,16 @@ class LLMAgent(ChessAgent):
             raise ValueError("流式输出返回空内容")
         return full_content
 
+    @staticmethod
+    def _is_ollama_base(base_lower: str) -> bool:
+        """判定 API 基地址是否为 Ollama 服务 (URL 含 ollama 关键字, 或默认端口 11434 且未带 /v1)"""
+        return ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
+
     def _chat_endpoint(self) -> str:
         """拼装 Chat Completions 端点 URL"""
         base = self.api_base.rstrip("/")
-        base_lower = base.lower()
         # Ollama 使用 /api/chat; OpenAI 兼容使用 /v1/chat/completions
-        # 检测: 1) URL 中包含 ollama 关键字; 2) 端口为默认 Ollama 端口 11434 且路径不含 /v1
-        is_ollama = ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
-        if is_ollama:
+        if self._is_ollama_base(base.lower()):
             return f"{base}/api/chat"
         if not base.endswith("/v1"):
             base = f"{base}/v1"
@@ -352,9 +358,7 @@ class LLMAgent(ChessAgent):
     def _models_endpoint(self) -> str:
         """拼装 Models 列表端点 URL"""
         base = self.api_base.rstrip("/")
-        base_lower = base.lower()
-        is_ollama = ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
-        if is_ollama:
+        if self._is_ollama_base(base.lower()):
             return f"{base}/api/tags"
         if not base.endswith("/v1"):
             base = f"{base}/v1"
@@ -364,8 +368,7 @@ class LLMAgent(ChessAgent):
     def test_connection_and_fetch_models(cls, api_base: str, api_key: str, timeout: int = 10) -> list[str]:
         """测试连接并拉取远端支持的模型列表 (静态/类方法，支持在对话框中即时调用)"""
         base = (api_base or "https://api.deepseek.com").rstrip("/")
-        base_lower = base.lower()
-        is_ollama = ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
+        is_ollama = cls._is_ollama_base(base.lower())
         url = f"{base}/api/tags" if is_ollama else (f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models")
 
         headers = {"Content-Type": "application/json"}
@@ -410,9 +413,7 @@ class LLMAgent(ChessAgent):
         if self.api_key:
             try:
                 reply = self.reply(move_req)
-                # 提取可能的 UCI 着法
-                import re
-                import chess
+                # 从回复中提取第一个合法的 UCI 着法
                 board = chess.Board(fen)
                 matches = re.findall(r"\b([a-h][1-8][a-h][1-8][qrbn]?)\b", reply.lower())
                 for m in matches:
@@ -435,7 +436,6 @@ class LLMAgent(ChessAgent):
                 pass
 
         # 随机合法着法兜底
-        import chess, random
         board = chess.Board(fen)
         legal_moves = list(board.legal_moves)
         if legal_moves:

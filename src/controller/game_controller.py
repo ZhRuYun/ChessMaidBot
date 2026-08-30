@@ -2,11 +2,20 @@
 游戏调度器 (模块2 - 调度层核心)
 棋局状态的唯一写路径: GUI 只发意图 (apply/undo/new_game/resign/draw), 状态变更经信号广播
 职责:
-  - 走法应用、记谱、终局判定与归档 (PGN + LLM 总结)
+  - 走法应用、记谱、终局判定与归档 (PGN + LLM 总结, 后台线程落盘避免阻塞 UI)
   - 人机对弈调度 (多线程异步执行 Stockfish 走棋，避免 GUI 冻结)
   - 认输 (Resign) 与 求和 (Offer/Claim Draw) 状态机流程
   - 对弈模式与教学开关的状态保持
+
+线程安全设计:
+  - 引擎调用统一走 shared_engine (进程级互斥复用), 不会产生 UCI 协议交错
+  - 过期异步结果通过「代际 (generation) 丢弃」机制失效, 不使用 terminate()
+    (强杀持锁线程会导致共享引擎死锁)
 """
+import json
+import threading
+import urllib.parse
+import urllib.request
 from typing import Optional, Dict, Any, Callable
 
 import chess
@@ -16,15 +25,15 @@ from ..agents.base import AgentRequest, AgentTools, PositionSnapshot
 from ..core.board_state import BoardState, GameResult
 from ..core.game_record import MoveHistoryManager
 from ..database.history_store import HistoryStore
-from ..engine.stockfish_client import StockfishClient
+from ..engine.stockfish_client import shared_engine
 from .game_modes import GameMode, GameModeManager
 from .teaching_triggers import TeachingTriggers
 
 
 class EngineWorker(QThread):
     """用于异步计算 Stockfish 引擎或 Maid LLM 最佳着法的后台工作线程"""
-    move_computed = Signal(str)  # 产出 UCI 格式着法 (如 e7e5)
-    failed = Signal(str)
+    move_computed = Signal(str, int)  # (UCI 着法, 代际号)
+    failed = Signal(str, int)         # (错误信息, 代际号)
 
     def __init__(
         self,
@@ -32,6 +41,7 @@ class EngineWorker(QThread):
         skill_level: int,
         target_elo: Optional[int],
         use_elo: bool,
+        generation: int = 0,
         is_maid_llm: bool = False,
         agent_request_builder: Optional[Callable[[], AgentRequest]] = None,
         agent: Optional[Any] = None,
@@ -42,9 +52,22 @@ class EngineWorker(QThread):
         self.skill_level = skill_level
         self.target_elo = target_elo
         self.use_elo = use_elo
+        self.generation = generation
         self.is_maid_llm = is_maid_llm
         self.agent_request_builder = agent_request_builder
         self.agent = agent
+
+    def _best_move_via_engine(self) -> Optional[str]:
+        """通过共享引擎进程计算最佳着法 (线程安全串行)"""
+
+        def _run(client):
+            if self.use_elo and self.target_elo is not None:
+                client.set_elo(self.target_elo)
+            else:
+                client.set_skill_level(self.skill_level)
+            return client.best_move(self.fen, movetime_ms=600)
+
+        return shared_engine.call(_run)
 
     def run(self):
         try:
@@ -55,21 +78,16 @@ class EngineWorker(QThread):
                 else:
                     uci_move = None
                 if uci_move:
-                    self.move_computed.emit(uci_move)
+                    self.move_computed.emit(uci_move, self.generation)
                     return
 
-            with StockfishClient() as client:
-                if self.use_elo and self.target_elo is not None:
-                    client.set_elo(self.target_elo)
-                else:
-                    client.set_skill_level(self.skill_level)
-                uci_move = client.best_move(self.fen, movetime_ms=600)
-                if uci_move:
-                    self.move_computed.emit(uci_move)
-                else:
-                    self.failed.emit("引擎未能计算出合法着法")
+            uci_move = self._best_move_via_engine()
+            if uci_move:
+                self.move_computed.emit(uci_move, self.generation)
+            else:
+                self.failed.emit("引擎未能计算出合法着法", self.generation)
         except Exception as e:
-            self.failed.emit(str(e))
+            self.failed.emit(str(e), self.generation)
 
 
 class GameController(QObject):
@@ -92,8 +110,12 @@ class GameController(QObject):
         self.history_store = history_store or HistoryStore()
         self._finalized = False
         self._engine_thread: Optional[EngineWorker] = None
+        self._engine_generation = 0  # 引擎思考代际号: 每次停止/重置自增, 旧线程结果按代际丢弃
         self._llm_summary_provider: Optional[Callable[[PositionSnapshot], str]] = None
         self._agent: Optional[Any] = None
+        # 联网搜索工具的自定义接口配置 (由 MainWindow 依据持久化 settings.json 注入)
+        self.search_api_url: str = ""
+        self.search_api_key: str = ""
 
     def set_agent(self, agent: Any):
         """设置用于女仆陪练模式的 Agent 实例"""
@@ -140,16 +162,18 @@ class GameController(QObject):
             self._start_engine_thinking()
 
     def _start_engine_thinking(self):
-        if self._engine_thread is not None and self._engine_thread.isRunning():
-            return
-
+        # 允许旧线程与新线程并存: 引擎调用经 shared_engine 串行, 结果按代际丢弃,
+        # 避免旧实现 terminate() 强杀线程导致的死锁与协议失步风险。
         is_maid_llm = (self.modes.mode == GameMode.VS_MAID_LLM)
+        self._engine_generation += 1
+        generation = self._engine_generation
         self.engine_thinking_changed.emit(True)
         self._engine_thread = EngineWorker(
             fen=self.board_state.get_fen(),
             skill_level=self.modes.engine_skill,
             target_elo=self.modes.target_elo,
             use_elo=self.modes.use_elo,
+            generation=generation,
             is_maid_llm=is_maid_llm,
             agent_request_builder=lambda: self.build_agent_request(user_message="", persona_prompt=""),
             agent=self._agent,
@@ -159,7 +183,9 @@ class GameController(QObject):
         self._engine_thread.failed.connect(self._on_engine_move_failed)
         self._engine_thread.start()
 
-    def _on_engine_move_ready(self, uci_move: str):
+    def _on_engine_move_ready(self, uci_move: str, generation: int):
+        if generation != self._engine_generation:
+            return  # 过期结果 (对局已被重置/悔棋), 直接丢弃
         self.engine_thinking_changed.emit(False)
         try:
             move = chess.Move.from_uci(uci_move)
@@ -169,7 +195,9 @@ class GameController(QObject):
         if not self.apply_move(move):
             self.engine_error.emit(f"Stockfish 返回的着法 {uci_move} 在当前局面中不合法。")
 
-    def _on_engine_move_failed(self, error_msg: str):
+    def _on_engine_move_failed(self, error_msg: str, generation: int):
+        if generation != self._engine_generation:
+            return
         self.engine_thinking_changed.emit(False)
         self.engine_error.emit(error_msg)
 
@@ -240,18 +268,24 @@ class GameController(QObject):
             return self.accept_draw(reason="和棋申诉成功 (50步规则 / 三度重复局面)")
 
         if self.modes.mode == GameMode.VS_ENGINE:
-            # 引擎根据评估决定是否接受
+            # 引擎根据评估决定是否接受 (复用共享引擎进程, 避免重复拉起开销)
             try:
-                with StockfishClient() as client:
-                    state = client.get_state(self.board_state.get_fen(), state_type="analyse", depth=8)
-                    analysis = state.get("analysis", [])
-                    if analysis and analysis[0].get("score_cp") is not None:
-                        cp = analysis[0]["score_cp"]
-                        # 引擎在劣势不大或均势 (分差在 ±100 cp 以内) 时接受和棋
-                        if abs(cp) <= 120:
-                            return self.accept_draw(reason="Stockfish 评估局面均势，同意和棋请求。")
-                        else:
-                            return {"accepted": False, "reason": "Stockfish 认为当前处于优势，拒绝了和棋请求。"}
+                def _analyse(client):
+                    if self.modes.use_elo and self.modes.target_elo is not None:
+                        client.set_elo(self.modes.target_elo)
+                    else:
+                        client.set_skill_level(self.modes.engine_skill)
+                    return client.get_state(self.board_state.get_fen(), state_type="analyse", depth=8)
+
+                state = shared_engine.call(_analyse)
+                analysis = state.get("analysis", [])
+                if analysis and analysis[0].get("score_cp") is not None:
+                    cp = analysis[0]["score_cp"]
+                    # 引擎在劣势不大或均势 (分差在 ±100 cp 以内) 时接受和棋
+                    if abs(cp) <= 120:
+                        return self.accept_draw(reason="Stockfish 评估局面均势，同意和棋请求。")
+                    else:
+                        return {"accepted": False, "reason": "Stockfish 认为当前处于优势，拒绝了和棋请求。"}
             except Exception:
                 pass
             return self.accept_draw(reason="双方协议和棋。")
@@ -281,10 +315,13 @@ class GameController(QObject):
         return {"accepted": True, "reason": reason}
 
     def _stop_engine_thread(self):
+        """使在途的引擎思考失效。
+
+        不再使用 terminate() 强杀线程 (存在共享引擎锁悬挂与 UCI 协议失步风险),
+        改为自增代际号: 仍在运行的后台线程算完后其结果会因代际不匹配而被丢弃。
+        """
         if self._engine_thread is not None:
-            if self._engine_thread.isRunning():
-                self._engine_thread.terminate()
-                self._engine_thread.wait(500)
+            self._engine_generation += 1
             self._engine_thread = None
             self.engine_thinking_changed.emit(False)
 
@@ -315,7 +352,10 @@ class GameController(QObject):
         self.board_state.custom_headers["Black"] = black_name
 
     def _finalize_game(self, status: dict, override_result: Optional[str] = None):
-        """终局处理: 补全对局头并以 'PGN + LLM 总结' 格式归档到历史棋局库"""
+        """终局处理: 补全对局头并以 'PGN + LLM 总结' 格式归档到历史棋局库
+
+        归档 (含可能耗时的 LLM 复盘网络请求) 在后台守护线程执行, 不阻塞 UI。
+        """
         self._stop_engine_thread()
         self._apply_mode_headers()
         status = dict(status)
@@ -323,8 +363,8 @@ class GameController(QObject):
 
         if not self._finalized:
             self._finalized = True
-            
-            # 异步或容错归档，确保 UI 不受阻塞
+
+            # 先在主线程内同步取快照与 PGN, 避免后台线程与后续棋局变更竞态
             pgn_to_save = self.board_state.export_pgn(override_result=result_str)
             snapshot = self.get_snapshot()
             provider = self._llm_summary_provider
@@ -347,7 +387,8 @@ class GameController(QObject):
                 except Exception:
                     pass
 
-            _do_save()
+            # 后台守护线程落盘: LLM 总结为网络请求, 最长可达数十秒, 绝不能卡住界面
+            threading.Thread(target=_do_save, daemon=True, name="game-archive").start()
 
         self.game_over.emit(status)
         self._emit_status()
@@ -381,7 +422,7 @@ class GameController(QObject):
         """从 FEN 字符串加载棋局"""
         self._stop_engine_thread()
         try:
-            board = chess.Board(fen.strip())
+            chess.Board(fen.strip())  # 仅用于合法性校验, 非法 FEN 会抛异常
             self.board_state.reset(fen.strip())
             self.history.clear()
             self._finalized = False
@@ -492,35 +533,41 @@ class GameController(QObject):
         return self.history_store.query_database(category=category, **params)
 
     def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None) -> Any:
-        """为 LLM 提供的引擎状态读取工具 (支持 best_move / analyse / eval)"""
+        """为 LLM 提供的引擎状态读取工具 (支持 best_move / analyse / eval)
+
+        经共享引擎进程执行; 引擎缺失或异常时返回 available=False 的降级字典,
+        保证 LLM 主链路不受影响。
+        """
         params = params or {}
-        with StockfishClient() as client:
+
+        def _read(client):
             if self.modes.use_elo and self.modes.target_elo is not None:
                 client.set_elo(self.modes.target_elo)
             else:
                 client.set_skill_level(self.modes.engine_skill)
             return client.get_state(fen=self.board_state.get_fen(), state_type=state_type, **params)
 
+        try:
+            return shared_engine.call(_read)
+        except Exception as e:
+            return {"available": False, "error": str(e)}
+
     def _agent_web_search(self, query: str) -> str:
         """为 LLM 提供的轻量联网搜索工具 (支持配置持久化 Search API 接口, 兼容无 key / 默认免 key 模式)"""
-        import urllib.request
-        import urllib.parse
-        import json
-        
-        # 优先读取持久化配置中的自定义 search API 配置
-        api_url = getattr(self, "search_api_url", None)
-        api_key = getattr(self, "search_api_key", None)
-        
+        # 优先读取持久化配置中的自定义 search API 配置 (由 MainWindow 注入)
+        api_url = (self.search_api_url or "").strip()
+        api_key = (self.search_api_key or "").strip()
+
         # 1. 若配置了自定义搜索 API (例如 Tavily / Serper / 自建搜索代理)
-        if api_url and api_url.strip():
+        if api_url:
             try:
                 headers = {"User-Agent": "ChessMaidBot/1.0", "Content-Type": "application/json"}
-                if api_key and api_key.strip():
-                    headers["Authorization"] = f"Bearer {api_key.strip()}"
-                    headers["api-key"] = api_key.strip()
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                    headers["api-key"] = api_key
 
                 payload = json.dumps({"query": query, "q": query}).encode("utf-8")
-                req = urllib.request.Request(api_url.strip(), data=payload, headers=headers)
+                req = urllib.request.Request(api_url, data=payload, headers=headers)
                 with urllib.request.urlopen(req, timeout=6) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     # 兼容多种格式返回
@@ -533,7 +580,7 @@ class GameController(QObject):
                         if "answer" in data:
                             return f"搜索结果: {data['answer']}"
                     return f"搜索结果: {json.dumps(data, ensure_ascii=False)[:300]}"
-            except Exception as e:
+            except Exception:
                 # 自定义接口出错时自动降级到 DuckDuckGo / Wikipedia 免 key 开放接口
                 pass
 
@@ -543,13 +590,13 @@ class GameController(QObject):
             req = urllib.request.Request(url, headers={"User-Agent": "ChessMaidBot/1.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                abstract = data.get("AbstractText", "")
-                if abstract:
-                    return f"搜索结果: {abstract}"
-                related = data.get("RelatedTopics", [])
-                if related and isinstance(related[0], dict) and "Text" in related[0]:
-                    return f"搜索结果: {related[0]['Text']}"
-                return f"未检索到关于 '{query}' 的直接摘要信息。"
+            abstract = data.get("AbstractText", "")
+            if abstract:
+                return f"搜索结果: {abstract}"
+            related = data.get("RelatedTopics", [])
+            if related and isinstance(related[0], dict) and "Text" in related[0]:
+                return f"搜索结果: {related[0]['Text']}"
+            return f"未检索到关于 '{query}' 的直接摘要信息。"
         except Exception as e:
             return f"联网搜索请求失败: {e}"
 

@@ -7,7 +7,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.request
 import urllib.parse
-from typing import Optional, Dict, Any
+from typing import Optional
 from PySide6.QtCore import QObject, Signal, QTimer
 
 
@@ -135,7 +135,7 @@ class OnlineMatchClient(QObject):
                     f"{self.base_url}/move", data=data,
                     headers={"Content-Type": "application/json"}
                 )
-                with urllib.request.urlopen(req, timeout=3) as resp:
+                with urllib.request.urlopen(req, timeout=3):
                     pass
             except Exception:
                 pass
@@ -150,7 +150,7 @@ class OnlineMatchClient(QObject):
                     f"{self.base_url}/reset", data=data,
                     headers={"Content-Type": "application/json"}
                 )
-                with urllib.request.urlopen(req, timeout=3) as resp:
+                with urllib.request.urlopen(req, timeout=3):
                     pass
             except Exception:
                 pass
@@ -165,7 +165,7 @@ class OnlineMatchClient(QObject):
                     body = resp.read().decode("utf-8")
                     data = json.loads(body)
                     return data
-            except Exception as e:
+            except Exception:
                 return None
 
         res = _get()

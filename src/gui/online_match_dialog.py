@@ -6,9 +6,8 @@ from typing import Optional, Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QRadioButton, QButtonGroup, QSpinBox,
-    QGroupBox, QMessageBox, QDialogButtonBox
+    QGroupBox, QMessageBox
 )
-from PySide6.QtCore import Qt
 
 
 class OnlineMatchDialog(QDialog):

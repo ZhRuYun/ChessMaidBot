@@ -10,7 +10,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
     QDialogButtonBox, QLabel, QCheckBox, QComboBox,
-    QTabWidget, QWidget, QPlainTextEdit, QGroupBox, QPushButton, QHBoxLayout, QMessageBox
+    QTabWidget, QWidget, QPlainTextEdit, QPushButton, QHBoxLayout, QMessageBox
 )
 
 from .persona_config_dialog import PERSONA_PRESETS
@@ -37,6 +37,8 @@ class LLMConfigDialog(QDialog):
         is_light = False
         if parent and hasattr(parent, "control_bar") and hasattr(parent.control_bar, "theme_combo"):
             is_light = (parent.control_bar.theme_combo.currentText() == "浅色")
+        # 保存到实例属性, 供 _build_ui 中的控件配色使用 (修复原先引用未定义变量的崩溃)
+        self._is_light = is_light
 
         if is_light:
             self.setStyleSheet("""
@@ -215,9 +217,10 @@ class LLMConfigDialog(QDialog):
         model_row = QHBoxLayout()
         model_row.addWidget(self.model_input, stretch=1)
         self.btn_test_fetch = QPushButton("测试连接并拉取模型")
+        # 按钮配色跟随主窗口当前主题 (浅色/深色)
         self.btn_test_fetch.setStyleSheet(
             "background-color: #0284c7; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
-            if is_light else
+            if self._is_light else
             "background-color: #2563eb; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
         )
         self.btn_test_fetch.clicked.connect(self._on_test_fetch_models)

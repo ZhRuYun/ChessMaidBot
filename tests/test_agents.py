@@ -1,5 +1,5 @@
 import unittest
-from src.agents.base import PositionSnapshot, AgentTools, AgentRequest
+from src.agents.base import PositionSnapshot, AgentRequest
 from src.agents.echo_agent import EchoAgent
 from src.agents.llm_agent import LLMAgent
 from src.agents.prompt_builder import PromptBuilder

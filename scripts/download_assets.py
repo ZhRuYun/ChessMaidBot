@@ -14,7 +14,7 @@ import json
 import io
 import urllib.request
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import List
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
@@ -159,7 +159,7 @@ def extract_stockfish_from_archive(archive_path: Path, target_path: Path, system
             print(f"[提取成功] 引擎文件已写入: {target_path}")
             return True
         else:
-            print(f"[提取失败] 未能在压缩包中找到合法的 Stockfish 二进制")
+            print("[提取失败] 未能在压缩包中找到合法的 Stockfish 二进制")
             if temp_target.exists():
                 temp_target.unlink()
             return False
@@ -186,7 +186,7 @@ def setup_stockfish() -> bool:
 
     # 2. 如果存在错误下载的文档（比如小于 1MB 或文本文件），先清理
     if dest_binary.exists():
-        print(f"[清理] 检测到残存的无效 Stockfish 文件，正在移除...")
+        print("[清理] 检测到残存的无效 Stockfish 文件，正在移除...")
         dest_binary.unlink()
 
     # 3. 尝试候选下载链接
@@ -232,7 +232,6 @@ def setup_openings_database() -> bool:
     from src.database.opening_book import DEFAULT_OPENING_PATTERNS
 
     openings_db = dict(DEFAULT_OPENING_PATTERNS)
-    success_any = False
 
     for letter in ['a', 'b', 'c', 'd', 'e']:
         content = None
@@ -250,7 +249,6 @@ def setup_openings_database() -> bool:
             print(f"[WARN] 无法获取开局库分卷 {letter}.tsv，使用默认开局库兜底")
             continue
 
-        success_any = True
         lines = content.splitlines()
         for line in lines[1:]:
             if not line.strip():

@@ -38,10 +38,10 @@
                    │ (信号监听与渲染刷新)                      │ 仅发用户意图 (move_ready / resign / draw)
  ┌─────────────────┴───────────────────────────────────────▼──────────────────────────────┐
  │ 模块 2: Controller 调度中枢层 (src/controller/)                                          │
- │  ├── GameController (棋局状态唯一写入口，统筹人机/本地对弈、认输求和、归档)             │
- │  ├── EngineWorker (QThread 后台异步计算引擎着法，避免 UI 阻塞)                           │
- │  ├── GameModeManager (对弈模式状态机与 Elo 评分管理)                                    │
- │  └── TeachingTriggers (教学触发器 5 级开关配置对象)                                    │
+  │  ├── GameController (棋局状态唯一写入口，统筹人机/本地对弈、认输求和、归档)             │
+  │  ├── EngineWorker (QThread 后台异步计算引擎着法，避免 UI 阻塞)                           │
+  │  ├── GameModeManager (对弈模式状态机与 Elo 评分管理)                                    │
+  │  └── TeachingTriggers (教学触发器 5 级开关配置对象)                                    │
  └───┬──────────────────────────┬─────────────────────────────┬───────────────────────────┘
      │ 规则调用与状态修改          │ UCI 目标 Elo 通信与分析      │ 终局归档 (PGN+LLM总结)
  ┌───▼──────────────────┐   ┌───▼───────────────────────┐   ┌─▼───────────────────────────┐
@@ -121,8 +121,9 @@
   * `game_controller.py` (`GameController`, `EngineWorker`):
     * 维护 `BoardState`、`MoveHistoryManager`、`GameModeManager`、`TeachingTriggers`、`HistoryStore`。
     * 提供 `apply_move()`, `undo()`, `resign()`, `offer_draw()`, `accept_draw()`, `new_game()`, `export_pgn()`, `import_pgn()` 等写接口。
-    * 启动 `EngineWorker` 子线程异步计算引擎走法，计算完成后自动投递 `apply_move`，并在思考期间通过 `engine_thinking_changed` 锁定棋盘。
-    * 在终局时组合 `export_pgn()` 与 LLM 总结回调，生成复合文件写入数据库。
+    * 启动 `EngineWorker` 子线程异步计算引擎走法（经 `shared_engine` 共享进程串行执行），计算完成后自动投递 `apply_move`，并在思考期间通过 `engine_thinking_changed` 锁定棋盘。
+    * 过期异步结果通过「代际 (generation) 丢弃」机制失效（重开/悔棋/换边时自增代际号），不使用 `terminate()` 强杀线程，杜绝共享引擎死锁与 UCI 协议失步。
+    * 在终局时组合 `export_pgn()` 与 LLM 总结回调，于后台守护线程生成复合文件写入数据库（LLM 复盘网络请求不阻塞 UI）。
   * `game_modes.py` (`GameModeManager`):
     * 枚举 `GameMode`: `LOCAL_PVP` (本地双人), `VS_ENGINE` (人机对弈), `VS_MAID_LLM` (女仆陪练)。
     * 管理引擎强度模式（`use_elo` 开关，目标 Elo: 500 ~ 3190，Skill Level: 0 ~ 20）。
@@ -144,13 +145,14 @@
 ### 模块 4: Stockfish 引擎接口 (`src/engine/`)
 * **设计原则**：封装标准输入输出（stdin/stdout）的 UCI 异步/同步进程通信。
 * **主要文件**：
-  * `stockfish_client.py` (`StockfishClient`):
+  * `stockfish_client.py` (`StockfishClient`, `SharedEngine` / `shared_engine`):
     * 自动探测 `engines/stockfish` 可执行文件。
     * 提供 `start()`, `quit()`, `set_skill_level(level: 0~20)`。
     * 提供 `set_elo(elo: 500~3190)`：通过 UCI 选项 `UCI_LimitStrength` 与 `UCI_Elo` 精准控制目标 Elo。
     * `best_move(fen, movetime_ms)`: 计算最佳单步走法。
     * `analyse(fen, depth, multipv)`: 返回多 PV 分析结果列表（包含评分 `score_cp` 与着法主变例 `pv`）。
     * `get_state(fen, state_type, **kwargs)`: 为 Agent 与上层模块提供统一引擎状态查询接口。
+    * `SharedEngine` / `shared_engine`：进程级共享引擎客户端池（懒启动 + 线程互斥复用），供 `EngineWorker`、求和评估与 Agent 工具统一复用同一 Stockfish 子进程，避免每次调用重复拉起进程与加载 NNUE 权重的开销；异常时自动销毁并重建客户端。
 
 ### 模块 5: Agent 接口及方法库 (`src/agents/`)
 * **设计原则**：面向 LLM 对话的抽象与标准化上下文打包。
@@ -179,7 +181,7 @@
 
 ---
 
-## 三、核心数据流向与时序
+## 四、核心数据流向与时序
 
 ### 1. 玩家下棋与人机对弈走棋流程
 ```
@@ -202,7 +204,7 @@
 
 ---
 
-## 四、未来功能扩展标准契约
+## 五、未来功能扩展标准契约
 
 ### 1. 接入与扩展真实大语言模型 (LLM)
 在子类中实现 `reply(self, request: AgentRequest) -> str`，支持配置 `reasoning_effort` 与 `stream` 模式，并可在内部调用 `request.tools.read_engine_state()` 或 `request.tools.read_database()`。

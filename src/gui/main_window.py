@@ -5,11 +5,12 @@
 """
 from typing import Optional
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QFrame,
+    QMainWindow, QWidget, QVBoxLayout, QSplitter, QFrame,
     QLabel, QMessageBox, QApplication, QInputDialog
 )
 from PySide6.QtCore import QThread, Signal, Qt
 import chess
+import json
 
 from ..agents.base import ChessAgent, AgentRequest
 from ..agents.llm_agent import LLMAgent
@@ -22,25 +23,25 @@ from .chess_board import ChessBoardWidget
 from .move_history_panel import MoveHistoryPanel
 from .chat_panel import ChatPanel
 from .control_bar import ControlBar
-import json
 
 
 class LLMWorker(QThread):
     """异步执行 LLM 请求的后台线程，配合 UI 显示 loading spinner"""
-    response_ready = Signal(str)
-    failed = Signal(str)
+    response_ready = Signal(str, int)  # (回复文本, 代际号)
+    failed = Signal(str, int)          # (错误信息, 代际号)
 
-    def __init__(self, agent: ChessAgent, request: AgentRequest, parent=None):
+    def __init__(self, agent: ChessAgent, request: AgentRequest, generation: int = 0, parent=None):
         super().__init__(parent)
         self.agent = agent
         self.request = request
+        self.generation = generation
 
     def run(self):
         try:
             reply = self.agent.reply(self.request)
-            self.response_ready.emit(reply)
+            self.response_ready.emit(reply, self.generation)
         except Exception as e:
-            self.failed.emit(str(e))
+            self.failed.emit(str(e), self.generation)
 
 
 class MainWindow(QMainWindow):
@@ -108,6 +109,7 @@ class MainWindow(QMainWindow):
 
         self.controller.set_agent(self.agent)
         self._llm_thread: Optional[LLMWorker] = None
+        self._llm_generation = 0  # LLM 请求代际号: 新请求发出后, 旧线程的过期回复按代际丢弃
         self._online_server: Optional[EmbeddedOnlineServer] = None
         self._online_client: Optional[OnlineMatchClient] = None
 
@@ -381,7 +383,7 @@ class MainWindow(QMainWindow):
             side_dialog = QMessageBox(self)
             side_dialog.setWindowTitle("选择执棋方")
             side_dialog.setText("请选择您在本局中执白棋还是执黑棋：")
-            btn_white = side_dialog.addButton("执白 (先手)", QMessageBox.ActionRole)
+            side_dialog.addButton("执白 (先手)", QMessageBox.ActionRole)
             btn_black = side_dialog.addButton("执黑 (后手)", QMessageBox.ActionRole)
             side_dialog.exec()
             chosen_side = "black" if side_dialog.clickedButton() == btn_black else "white"
@@ -594,8 +596,6 @@ class MainWindow(QMainWindow):
 
         self.controller.search_api_url = new_config.get("search_api_url", "")
         self.controller.search_api_key = new_config.get("search_api_key", "")
-        self._persisted_search_api_url = self.controller.search_api_url
-        self._persisted_search_api_key = self.controller.search_api_key
 
         self.controller.set_agent(self.agent)
         self._sync_llm_connection_status()
@@ -711,23 +711,30 @@ class MainWindow(QMainWindow):
         self._dispatch_llm_request(message)
 
     def _dispatch_llm_request(self, message: str):
-        """异步调度 LLM 请求，展示 Loading 旋转控件"""
-        if self._llm_thread is not None and self._llm_thread.isRunning():
-            self._llm_thread.terminate()
-            self._llm_thread.wait(300)
+        """异步调度 LLM 请求，展示 Loading 旋转控件
+
+        新请求发出时不 terminate 旧线程 (强杀可能中断共享引擎互斥区导致死锁),
+        而是自增代际号: 旧线程完成后其回复因代际不匹配而被静默丢弃。
+        """
+        self._llm_generation += 1
+        generation = self._llm_generation
 
         self.chat_panel.set_loading(True)
         request = self.controller.build_agent_request(message, persona_prompt=self.current_persona)
 
-        self._llm_thread = LLMWorker(self.agent, request, parent=self)
+        self._llm_thread = LLMWorker(self.agent, request, generation=generation, parent=self)
         self._llm_thread.response_ready.connect(self._on_llm_response)
         self._llm_thread.failed.connect(self._on_llm_failed)
         self._llm_thread.start()
 
-    def _on_llm_response(self, reply: str):
+    def _on_llm_response(self, reply: str, generation: int):
+        if generation != self._llm_generation:
+            return  # 过期回复, 丢弃
         self.chat_panel.set_loading(False)
         self.chat_panel.append_maid_message(reply)
 
-    def _on_llm_failed(self, error_msg: str):
+    def _on_llm_failed(self, error_msg: str, generation: int):
+        if generation != self._llm_generation:
+            return
         self.chat_panel.set_loading(False)
         self.chat_panel.append_maid_message(f"*(女仆回复出现异常: {error_msg})*")

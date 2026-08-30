@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import chess
 import chess.pgn
 import io
+import logging
 
 
 class GameResult:
@@ -223,7 +224,7 @@ class BoardState:
     def import_pgn(self, pgn_str: str) -> bool:
         """从 PGN 文本加载对局 (含头信息); 含错误/空棋谱时拒绝并保持原局面"""
         try:
-            import io, logging
+            # 临时屏蔽 python-chess 对半破损 PGN 的告警日志, 避免刷屏
             logger = logging.getLogger("chess.pgn")
             prev_level = logger.level
             logger.setLevel(logging.CRITICAL)

@@ -5,7 +5,7 @@
 from pathlib import Path
 from typing import Optional, Dict, Any, Union
 
-from ..config import DATA_DIR, GAMES_DIR, BOOKS_DIR, OPENING_BOOK_PATH, DEFAULT_OPENINGS_JSON_PATH
+from ..config import DATA_DIR
 from .history_store import HistoryStore
 from .opening_book import OpeningBook
 

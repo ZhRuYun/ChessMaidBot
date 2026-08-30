@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any, Union
 import chess
 import chess.polyglot
 
-from ..config import BOOKS_DIR, OPENING_BOOK_PATH, DEFAULT_OPENINGS_JSON_PATH
+from ..config import OPENING_BOOK_PATH, DEFAULT_OPENINGS_JSON_PATH
 
 
 @dataclass

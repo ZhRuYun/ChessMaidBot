@@ -127,9 +127,9 @@ ChessMaidBot/
 ├── main.py                     # 程序启动入口
 ├── requirements.txt            # Python 依赖清单
 ├── README.md                   # 项目总说明文档
-├── ARCHITECTURE.md             # 架构全景与接口详细设计文档
-├── AGENTS.md                   # AI 协作与二次开发规范
-├── docs/                       # 项目详细开发与配置教程文档
+├── docs/                       # 项目详细开发与配置文档
+│   ├── ARCHITECTURE.md         # 架构全景与接口详细设计文档
+│   ├── AGENTS.md               # AI 协作与二次开发规范
 │   └── CUSTOM_CONFIG_GUIDE.md  # 可自定义配置功能完全教程
 ├── assets/                     # 静态资源（矢量棋子 SVG 图标等）
 ├── engines/                    # 引擎存放目录（放入 stockfish 二进制）
@@ -138,10 +138,11 @@ ChessMaidBot/
 │   ├── config.py               # 全局配置、主题、Prompt、Elo 范围与路径定义
 │   ├── core/                   # [模块3] 规则核心与记谱 (BoardState, MoveHistoryManager)
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
-│   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
+│   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient, SharedEngine 共享引擎池)
 │   ├── agents/                 # [模块5] Agent 抽象、LLM客户端与 PromptBuilder (ChessAgent, LLMAgent, PromptBuilder)
 │   ├── database/               # [模块6] 统一数据库管理(UnifiedDatabase)、历史棋局库持久化、开局库(Polyglot/JSON)
 │   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LLM/人设配置弹窗等)
+├── scripts/                    # 资源一键下载安装脚本 (Stockfish 引擎 + Lichess 开局库)
 └── tests/                      # 单元测试与集成测试 (覆盖六大模块核心链路)
 ```
 
@@ -185,11 +186,17 @@ with StockfishClient() as engine:
 
 ## 八、测试与质量保证
 
-项目采用标准 `unittest` 构建了全面的测试矩阵（覆盖规则、记谱、控制器、数据库、引擎客户端及离屏 GUI 链路）：
+项目采用标准 `unittest` 构建了全面的测试矩阵（覆盖规则、记谱、控制器、数据库、引擎客户端与共享引擎池、离屏 GUI 与配置对话框链路）：
 
 ```bash
-# 运行全部测试（无图形界面环境下）
+# 方式一: 使用 pytest 运行全部测试（推荐）
+QT_QPA_PLATFORM=offscreen python3 -m pytest tests/ -q
+
+# 方式二: 使用 unittest 原生发现（无图形界面环境下）
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests
+
+# 静态检查 (未用导入/未定义名称等)
+python3 -m pyflakes src/ scripts/ main.py
 ```
 
 ---

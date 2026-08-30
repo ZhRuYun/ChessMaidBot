@@ -7,9 +7,7 @@ LLM 配置通过持久化 settings.json 与环境变量读取:
 启动时自动检查 Stockfish 引擎与 Lichess 开局数据库是否完备，缺失时自动安装补齐。
 """
 import sys
-from pathlib import Path
 from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
 
 from src.config import ENGINE_PATH, DEFAULT_OPENINGS_JSON_PATH
 from src.gui.main_window import MainWindow
