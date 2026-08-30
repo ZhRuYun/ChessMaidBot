@@ -40,6 +40,7 @@ class TestGUI(unittest.TestCase):
         self.assertEqual(dialog.get_persona(), "test persona")
         config = dialog.get_config()
         self.assertEqual(config["api_base"], "https://api.deepseek.com")
+        self.assertEqual(config["model"], "deepseek-v4-flash")
         self.assertFalse(config["stream"])
 
 

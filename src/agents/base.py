@@ -29,12 +29,14 @@ class AgentTools:
     3. read_database: 统一数据库读取代理 (category="opening" 或 "history")
     4. read_engine_state: 引擎状态读取 (best_move, analyse, eval)
     5. web_search: 联网搜索工具 (国际象棋术语、棋理与知识检索)
+    6. request_undo: 与LLM对弈模式下，LLM判断局势不利时向玩家发送悔棋请求
     """
     query_opening: Optional[Callable[[Optional[str], int], Dict[str, Any]]] = None
     query_history: Optional[Callable[[int, bool], Dict[str, Any]]] = None
     read_database: Optional[Callable[[str, Dict[str, Any]], Any]] = None
     read_engine_state: Optional[Callable[[str, Dict[str, Any]], Any]] = None
     web_search: Optional[Callable[[str], str]] = None
+    request_undo: Optional[Callable[[str], bool]] = None
 
 
 @dataclass

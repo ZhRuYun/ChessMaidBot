@@ -10,7 +10,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
     QDialogButtonBox, QLabel, QCheckBox, QComboBox,
-    QTabWidget, QWidget, QPlainTextEdit, QPushButton, QHBoxLayout, QMessageBox
+    QTabWidget, QWidget, QPlainTextEdit, QPushButton, QHBoxLayout, QMessageBox, QInputDialog
 )
 
 from .persona_config_dialog import PERSONA_PRESETS
@@ -155,6 +155,13 @@ class LLMConfigDialog(QDialog):
                     padding: 6px 10px;
                     font-size: 13px;
                 }
+                QComboBox QAbstractItemView {
+                    background-color: #1e293b;
+                    color: #f8fafc;
+                    selection-background-color: #38bdf8;
+                    selection-color: #0f172a;
+                    border: 1px solid #334155;
+                }
                 QCheckBox {
                     color: #cbd5e1;
                     font-size: 13px;
@@ -210,21 +217,28 @@ class LLMConfigDialog(QDialog):
         self.chk_show_key.toggled.connect(self._toggle_key_visibility)
         form.addRow("", self.chk_show_key)
 
-        self.model_input = QLineEdit(current.get("model", ""))
-        self.model_input.setPlaceholderText("例如: deepseek-chat, gpt-4o")
+        self.model_input = QLineEdit(current.get("model", "deepseek-v4-flash"))
+        self.model_input.setPlaceholderText("例如: deepseek-v4-flash, gpt-4o")
 
-        # 模型选择与拉取行
+        # 模型选择与测试/拉取按钮行
         model_row = QHBoxLayout()
         model_row.addWidget(self.model_input, stretch=1)
-        self.btn_test_fetch = QPushButton("测试连接并拉取模型")
-        # 按钮配色跟随主窗口当前主题 (浅色/深色)
-        self.btn_test_fetch.setStyleSheet(
+
+        btn_style = (
             "background-color: #0284c7; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
             if self._is_light else
             "background-color: #2563eb; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
         )
-        self.btn_test_fetch.clicked.connect(self._on_test_fetch_models)
-        model_row.addWidget(self.btn_test_fetch)
+
+        self.btn_test_conn = QPushButton("测试连接")
+        self.btn_test_conn.setStyleSheet(btn_style)
+        self.btn_test_conn.clicked.connect(self._on_test_connection)
+        model_row.addWidget(self.btn_test_conn)
+
+        self.btn_fetch_models = QPushButton("拉取模型")
+        self.btn_fetch_models.setStyleSheet(btn_style)
+        self.btn_fetch_models.clicked.connect(self._on_fetch_models)
+        model_row.addWidget(self.btn_fetch_models)
 
         # 远端拉取后的模型下拉选择
         self.remote_models_combo = QComboBox()
@@ -303,23 +317,53 @@ class LLMConfigDialog(QDialog):
         persona_layout = QVBoxLayout(tab_persona)
         persona_layout.setSpacing(10)
 
+        # 加载已有模板及自定义模板列表
+        self.custom_templates: list[tuple[str, str, str]] = list(PERSONA_PRESETS)
+        custom_saved = current.get("custom_personas", [])
+        for item in custom_saved:
+            if isinstance(item, (list, tuple)) and len(item) == 3:
+                self.custom_templates.append((item[0], item[1], item[2]))
+
         preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("选择预设模板:"))
+        preset_row.addWidget(QLabel("选择人设模板:"))
         self.persona_combo = QComboBox()
-        for name, desc, _ in PERSONA_PRESETS:
-            self.persona_combo.addItem(f"{name} ({desc})")
+        self._refresh_persona_combo()
         preset_row.addWidget(self.persona_combo, stretch=1)
         self.persona_combo.currentIndexChanged.connect(self._on_preset_selected)
+
+        btn_new_tpl = QPushButton("+ 新建模板")
+        btn_new_tpl.setStyleSheet(
+            "background-color: #0284c7; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
+            if self._is_light else
+            "background-color: #2563eb; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
+        )
+        btn_new_tpl.clicked.connect(self._on_create_new_template)
+        preset_row.addWidget(btn_new_tpl)
+
         persona_layout.addLayout(preset_row)
 
         self.persona_edit = QPlainTextEdit(persona)
         persona_layout.addWidget(self.persona_edit)
 
         p_btn_row = QHBoxLayout()
-        btn_reset = QPushButton("恢复默认人设")
-        btn_reset.setStyleSheet("background-color: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px;")
+        btn_reset = QPushButton("恢复默认 Maid 人设")
+        btn_reset.setStyleSheet(
+            "background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px;"
+            if self._is_light else
+            "background-color: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px;"
+        )
         btn_reset.clicked.connect(lambda: self.persona_edit.setPlainText(DEFAULT_MAID_PERSONA))
         p_btn_row.addWidget(btn_reset)
+
+        btn_save_tpl = QPushButton("将当前编辑保存为新模板")
+        btn_save_tpl.setStyleSheet(
+            "background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px;"
+            if self._is_light else
+            "background-color: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px;"
+        )
+        btn_save_tpl.clicked.connect(self._on_save_as_template)
+        p_btn_row.addWidget(btn_save_tpl)
+
         p_btn_row.addStretch()
         persona_layout.addLayout(p_btn_row)
 
@@ -341,15 +385,38 @@ class LLMConfigDialog(QDialog):
         """切换 API Key 明文/密文显示"""
         self.key_input.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
 
-    def _on_test_fetch_models(self):
-        """测试连接并拉取模型列表"""
+    def _on_test_connection(self):
+        """测试 API 连接"""
         api_base = self.base_input.text().strip() or "https://api.deepseek.com"
         api_key = self.key_input.text().strip()
 
-        self.btn_test_fetch.setEnabled(False)
-        self.btn_test_fetch.setText("测试中...")
+        self.btn_test_conn.setEnabled(False)
+        self.btn_test_conn.setText("测试中...")
         try:
-            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
+            ok = LLMAgent.test_connection(api_base, api_key, timeout=8)
+            if ok:
+                QMessageBox.information(self, "连接成功", "API 服务连接正常！")
+            else:
+                QMessageBox.warning(self, "连接异常", "API 响应异常，请检查配置。")
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "连接失败",
+                f"未能连通 API 接口：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
+            )
+        finally:
+            self.btn_test_conn.setEnabled(True)
+            self.btn_test_conn.setText("测试连接")
+
+    def _on_fetch_models(self):
+        """拉取远端模型列表"""
+        api_base = self.base_input.text().strip() or "https://api.deepseek.com"
+        api_key = self.key_input.text().strip()
+
+        self.btn_fetch_models.setEnabled(False)
+        self.btn_fetch_models.setText("拉取中...")
+        try:
+            models = LLMAgent.fetch_models(api_base, api_key, timeout=8)
             if models:
                 self.remote_models_combo.blockSignals(True)
                 self.remote_models_combo.clear()
@@ -360,32 +427,78 @@ class LLMConfigDialog(QDialog):
                 self.remote_models_combo.setVisible(True)
                 QMessageBox.information(
                     self,
-                    "连接成功",
-                    f"成功连接至 API 接口！共获取到 {len(models)} 个模型。\n您可在右侧下拉框中直接选择，或继续手动输入。"
+                    "拉取成功",
+                    f"共拉取到 {len(models)} 个模型。\n您可在右侧下拉框中直接选择，或继续手动输入。"
                 )
             else:
                 QMessageBox.information(
                     self,
-                    "连接成功",
-                    "成功连通 API 服务，但接口返回的模型列表为空。您可以直接在输入框填写模型名称。"
+                    "拉取提示",
+                    "成功连通 API 服务，但返回的模型列表为空。您可以直接在输入框填写模型名称。"
                 )
         except Exception as e:
             QMessageBox.warning(
                 self,
-                "连接失败",
-                f"未能连通 API 接口或拉取模型失败：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
+                "拉取失败",
+                f"拉取模型失败：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
             )
         finally:
-            self.btn_test_fetch.setEnabled(True)
-            self.btn_test_fetch.setText("测试连接并拉取模型")
+            self.btn_fetch_models.setEnabled(True)
+            self.btn_fetch_models.setText("拉取模型")
+
+    def _on_test_fetch_models(self):
+        """兼容旧接口"""
+        self._on_fetch_models()
 
     def _on_remote_model_picked(self, text: str):
         if text and not text.startswith("--"):
             self.model_input.setText(text)
 
+    def _refresh_persona_combo(self):
+        self.persona_combo.blockSignals(True)
+        self.persona_combo.clear()
+        for name, desc, _ in self.custom_templates:
+            self.persona_combo.addItem(f"{name} ({desc})" if desc else name)
+        self.persona_combo.blockSignals(False)
+
+    def _on_create_new_template(self):
+        """让玩家创建新模板"""
+        name, ok = QInputDialog.getText(self, "新建人设模板", "请输入模板名称:")
+        if not ok or not name.strip():
+            return
+        desc, ok = QInputDialog.getText(self, "新建人设模板", "请输入模板简短描述(可选):")
+        if not ok:
+            desc = ""
+        prompt, ok = QInputDialog.getMultiLineText(self, "新建人设模板", "请输入 Prompt 人设文本:", DEFAULT_MAID_PERSONA)
+        if not ok or not prompt.strip():
+            return
+
+        self.custom_templates.append((name.strip(), desc.strip(), prompt.strip()))
+        self._refresh_persona_combo()
+        self.persona_combo.setCurrentIndex(len(self.custom_templates) - 1)
+        self.persona_edit.setPlainText(prompt.strip())
+
+    def _on_save_as_template(self):
+        """将当前编辑框的人设保存为新模板"""
+        prompt = self.persona_edit.toPlainText().strip()
+        if not prompt:
+            QMessageBox.warning(self, "提示", "人设内容为空，无法保存为模板。")
+            return
+        name, ok = QInputDialog.getText(self, "保存为新模板", "请输入模板名称:")
+        if not ok or not name.strip():
+            return
+        desc, ok = QInputDialog.getText(self, "保存为新模板", "请输入模板描述(可选):")
+        if not ok:
+            desc = ""
+
+        self.custom_templates.append((name.strip(), desc.strip(), prompt))
+        self._refresh_persona_combo()
+        self.persona_combo.setCurrentIndex(len(self.custom_templates) - 1)
+        QMessageBox.information(self, "保存成功", f"模板【{name.strip()}】已成功添加！")
+
     def _on_preset_selected(self, index: int):
-        if 0 <= index < len(PERSONA_PRESETS):
-            _, _, prompt = PERSONA_PRESETS[index]
+        if 0 <= index < len(self.custom_templates):
+            _, _, prompt = self.custom_templates[index]
             self.persona_edit.setPlainText(prompt)
 
     def get_config(self) -> dict:
@@ -398,6 +511,9 @@ class LLMConfigDialog(QDialog):
             "reasoning_effort": self.reasoning_combo.currentData(),
             "stream": self.chk_stream.isChecked(),
             "show_tool_records": self.chk_tool_records.isChecked(),
+            "custom_personas": [
+                (t[0], t[1], t[2]) for t in self.custom_templates if t[0] != "ChessMaid 默认女仆"
+            ],
         }
 
     def get_triggers(self) -> TeachingTriggers:

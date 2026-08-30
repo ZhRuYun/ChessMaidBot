@@ -263,9 +263,14 @@ class ChessBoardWidget(QWidget):
             self.execute_user_move(self.selected_square, sq)
             return
 
-        # 选中自己阵营的棋子
+        # 选中自己阵营的棋子 (在与引擎/LLM对弈模式下，只允许操作玩家己方阵营棋子)
         piece = self.board_state.get_piece_at(sq)
         if piece and piece.color == self.board_state.turn:
+            if hasattr(self, "allowed_side_callback") and callable(self.allowed_side_callback):
+                allowed_color = self.allowed_side_callback()
+                if allowed_color is not None and piece.color != allowed_color:
+                    self._clear_selection()
+                    return
             self.selected_square = sq
             self.dragging_square = sq
             self.drag_current_pos = self._event_pos(event)

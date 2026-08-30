@@ -140,6 +140,8 @@ class ChatPanel(QWidget):
 
         layout.addLayout(action_layout)
 
+        self._message_history: list[tuple[str, str]] = []  # (role, text/markdown)
+
         # 初始欢迎信息
         self.append_maid_message(
             "主人您好！我是您的 AI 棋艺教学助理【ChessMaid】。\n\n"
@@ -181,40 +183,59 @@ class ChatPanel(QWidget):
         else:
             self.set_llm_connected(False)
 
-    def append_user_message(self, text: str):
-        bubble_html = f"""
-        <div style='margin-bottom: 12px; text-align: right;'>
-            <div style='display: inline-block; max-width: 85%; background-color: #1e3a8a;
-                        color: #ffffff; padding: 8px 12px; border-radius: 12px 12px 2px 12px;
-                        text-align: left; font-size: 13px; line-height: 1.5;'>
-                <b style='color: #94a3b8; font-size: 11px;'>您:</b><br>{text}
-            </div>
-        </div>
-        """
-        self.chat_display.append(bubble_html)
-
-    def append_maid_message(self, markdown_text: str):
-        md_html = markdown.markdown(
-            markdown_text,
-            extensions=['fenced_code', 'tables']
-        )
+    def _render_all_messages(self):
+        """根据当前主题重新渲染全部对话历史"""
+        self.chat_display.clear()
         is_light = getattr(self, "_is_light_theme", False)
         bg = "#f1f5f9" if is_light else "#1e293b"
         text_col = "#0f172a" if is_light else "#e2e8f0"
         border = "#cbd5e1" if is_light else "#334155"
-        bubble_html = f"""
-        <div style='margin-bottom: 12px; text-align: left;'>
-            <div style='display: inline-block; max-width: 90%; background-color: {bg};
-                        color: {text_col}; border: 1px solid {border}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
-                        font-size: 13px; line-height: 1.6;'>
-                <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}
-            </div>
-        </div>
-        """
-        self.chat_display.append(bubble_html)
+        user_bg = "#0284c7" if is_light else "#1e3a8a"
+        user_text = "#ffffff"
+
+        html_blocks = []
+        for role, msg in self._message_history:
+            if role == "user":
+                html = f"""
+                <div style='margin-bottom: 12px; text-align: right;'>
+                    <div style='display: inline-block; max-width: 85%; background-color: {user_bg};
+                                color: {user_text}; padding: 8px 12px; border-radius: 12px 12px 2px 12px;
+                                text-align: left; font-size: 13px; line-height: 1.5;'>
+                        <b style='color: #e2e8f0; font-size: 11px;'>您:</b><br>{msg}
+                    </div>
+                </div>
+                """
+            else:
+                md_html = markdown.markdown(
+                    msg,
+                    extensions=['fenced_code', 'tables']
+                )
+                html = f"""
+                <div style='margin-bottom: 12px; text-align: left;'>
+                    <div style='display: inline-block; max-width: 90%; background-color: {bg};
+                                color: {text_col}; border: 1px solid {border}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
+                                font-size: 13px; line-height: 1.6;'>
+                        <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}
+                    </div>
+                </div>
+                """
+            html_blocks.append(html)
+
+        self.chat_display.setHtml("".join(html_blocks))
+        sb = self.chat_display.verticalScrollBar()
+        if sb:
+            sb.setValue(sb.maximum())
+
+    def append_user_message(self, text: str):
+        self._message_history.append(("user", text))
+        self._render_all_messages()
+
+    def append_maid_message(self, markdown_text: str):
+        self._message_history.append(("maid", markdown_text))
+        self._render_all_messages()
 
     def apply_theme(self, is_light: bool):
-        """动态切换对话面板主题"""
+        """动态切换对话面板主题并重绘对话历史"""
         self._is_light_theme = is_light
         if is_light:
             self.title_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
@@ -242,6 +263,34 @@ class ChatPanel(QWidget):
                     border: 1px solid #0284c7;
                 }
             """)
+            self.ask_llm_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #0369a1; }
+                QPushButton:pressed { background-color: #075985; }
+                QPushButton:disabled { background-color: #e2e8f0; color: #94a3b8; }
+            """)
+            self.send_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #0369a1; }
+                QPushButton:pressed { background-color: #075985; }
+                QPushButton:disabled { background-color: #e2e8f0; color: #94a3b8; }
+            """)
         else:
             self.title_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #f8fafc;")
             self.chat_display.setStyleSheet("""
@@ -268,6 +317,35 @@ class ChatPanel(QWidget):
                     border: 1px solid #38bdf8;
                 }
             """)
+            self.ask_llm_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #0369a1; }
+                QPushButton:pressed { background-color: #075985; }
+                QPushButton:disabled { background-color: #1e293b; color: #64748b; }
+            """)
+            self.send_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #2563eb;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #1d4ed8; }
+                QPushButton:pressed { background-color: #1e40af; }
+                QPushButton:disabled { background-color: #1e293b; color: #64748b; }
+            """)
+        self._render_all_messages()
 
     def send_message(self, text: str):
         text = text.strip()

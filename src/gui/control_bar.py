@@ -281,29 +281,161 @@ class ControlBar(QWidget):
         self.elo_spin.setVisible(is_vs_engine)
 
     def apply_theme(self, is_light: bool):
-        """适配浅色/深色主题"""
+        """适配浅色/深色主题，更新所有控件与按钮背景及前景色"""
         if is_light:
             self.setStyleSheet("""
                 QComboBox {
                     background-color: #ffffff;
                     color: #0f172a;
                     border: 1px solid #cbd5e1;
-                    border-radius: 4px;
-                    padding: 4px 8px;
+                    border-radius: 6px;
+                    padding: 5px 8px;
+                    font-size: 12px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    selection-background-color: #0284c7;
+                    border: 1px solid #cbd5e1;
                 }
                 QSpinBox {
                     background-color: #ffffff;
                     color: #0f172a;
                     border: 1px solid #cbd5e1;
-                    border-radius: 4px;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-size: 12px;
                 }
                 QPushButton {
                     background-color: #f1f5f9;
                     color: #0f172a;
                     border: 1px solid #cbd5e1;
-                    border-radius: 4px;
-                    padding: 5px 12px;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #e2e8f0;
+                    color: #0284c7;
+                    border-color: #0284c7;
+                }
+            """)
+            self.btn_resign.setStyleSheet("""
+                QPushButton {
+                    background-color: #fef2f2;
+                    color: #dc2626;
+                    border: 1px solid #fca5a5;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #fee2e2;
+                    color: #b91c1c;
+                    border-color: #ef4444;
+                }
+            """)
+            btn_action_style = """
+                QPushButton {
+                    background-color: #f0f9ff;
+                    color: #0284c7;
+                    border: 1px solid #7dd3fc;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #e0f2fe;
+                    color: #0369a1;
+                    border-color: #0284c7;
+                }
+            """
+            self.btn_import_state.setStyleSheet(btn_action_style)
+            self.btn_export_state.setStyleSheet(btn_action_style)
+            self.btn_llm_config.setStyleSheet("""
+                QPushButton {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #0369a1;
                 }
             """)
         else:
             self.setStyleSheet("")
+            standard_buttons = [
+                self.btn_new_game, self.btn_undo, self.btn_flip, self.btn_draw
+            ]
+            for btn in standard_buttons:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e222d;
+                        color: #e2e8f0;
+                        border: 1px solid #334155;
+                        border-radius: 6px;
+                        padding: 6px 12px;
+                        font-size: 12px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover {
+                        background-color: #282f3e;
+                        color: #ffffff;
+                        border-color: #60a5fa;
+                    }
+                """)
+            self.btn_resign.setStyleSheet("""
+                QPushButton {
+                    background-color: #31181e;
+                    color: #fca5a5;
+                    border: 1px solid #5c242e;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #451d27;
+                    color: #ffffff;
+                    border-color: #ef4444;
+                }
+            """)
+            btn_action_style = """
+                QPushButton {
+                    background-color: #1e293b;
+                    color: #38bdf8;
+                    border: 1px solid #0284c7;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #0369a1;
+                    color: #ffffff;
+                    border-color: #38bdf8;
+                }
+            """
+            self.btn_import_state.setStyleSheet(btn_action_style)
+            self.btn_export_state.setStyleSheet(btn_action_style)
+            self.btn_llm_config.setStyleSheet("""
+                QPushButton {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #0369a1;
+                }
+            """)

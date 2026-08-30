@@ -100,6 +100,7 @@ class GameController(QObject):
     mode_changed = Signal(object)          # GameMode
     engine_thinking_changed = Signal(bool) # 引擎是否在思考中 (用于锁定 UI 交互)
     engine_error = Signal(str)             # 引擎启动或计算失败的可见错误
+    undo_requested_by_llm = Signal(str)    # LLM 劣势时向玩家发起的悔棋请求理由
 
     def __init__(self, history_store: Optional[HistoryStore] = None, parent=None):
         super().__init__(parent)
@@ -600,6 +601,13 @@ class GameController(QObject):
         except Exception as e:
             return f"联网搜索请求失败: {e}"
 
+    def _agent_request_undo(self, reason: str = "局势不利") -> bool:
+        """与LLM对弈模式下，LLM发送悔棋请求"""
+        if self.modes.mode == GameMode.VS_MAID_LLM:
+            self.undo_requested_by_llm.emit(reason)
+            return True
+        return False
+
     def build_agent_request(self, user_message: str, persona_prompt: str) -> AgentRequest:
         tools = AgentTools(
             query_opening=self._agent_query_opening,
@@ -607,6 +615,7 @@ class GameController(QObject):
             read_database=self._agent_read_database,
             read_engine_state=self._agent_read_engine_state,
             web_search=self._agent_web_search,
+            request_undo=self._agent_request_undo,
         )
         return AgentRequest(
             user_message=user_message,

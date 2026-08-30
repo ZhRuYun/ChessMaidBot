@@ -97,9 +97,9 @@ class MainWindow(QMainWindow):
                 if not self.agent.api_key and llm_cfg.get("api_key"):
                     self.agent.api_key = llm_cfg.get("api_key")
                 if self.agent.api_base == "https://api.deepseek.com" and llm_cfg.get("api_base"):
-                    self.agent.api_base = llm_cfg.get("api_base")
-                if self.agent.model == "deepseek-chat" and llm_cfg.get("model"):
-                    self.agent.model = llm_cfg.get("model")
+                    self.agent.api_base = llm_cfg["api_base"]
+                if self.agent.model in ("deepseek-chat", "deepseek-v4-flash") and llm_cfg.get("model"):
+                    self.agent.model = llm_cfg["model"]
                 if llm_cfg.get("reasoning_effort"):
                     self.agent.reasoning_effort = llm_cfg.get("reasoning_effort")
                 if "stream" in llm_cfg:
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         board_container.addWidget(self.status_bar_label)
 
         self.chess_board = ChessBoardWidget(self.controller.board_state, board_widget)
+        self.chess_board.allowed_side_callback = self._get_user_allowed_color
         self.chess_board.move_ready.connect(self.controller.apply_move)
         board_container.addWidget(self.chess_board, alignment=Qt.AlignCenter)
         board_widget.setMinimumWidth(self.chess_board.minimumSizeHint().width() + 16)
@@ -216,6 +217,15 @@ class MainWindow(QMainWindow):
         self.content_splitter.setSizes([240, 560, 440])
         main_layout.addWidget(self.content_splitter, stretch=1)
 
+    def _get_user_allowed_color(self) -> Optional[chess.Color]:
+        """判定当前模式下玩家允许操控的棋子颜色，非对弈模式或本地双人模式返回 None (允许操控双方)"""
+        mode = self.controller.modes.mode
+        if mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
+            return chess.WHITE if self.controller.modes.player_side == "white" else chess.BLACK
+        if mode == GameMode.ONLINE_PVP and self._online_client:
+            return chess.WHITE if self._online_client.my_side == "white" else chess.BLACK
+        return None
+
     def connect_controller(self):
         ctrl = self.controller
         ctrl.position_changed.connect(self.chess_board.show_move)
@@ -226,6 +236,7 @@ class MainWindow(QMainWindow):
         ctrl.game_reset.connect(self.on_game_reset)
         ctrl.engine_thinking_changed.connect(self.on_engine_thinking)
         ctrl.engine_error.connect(self.on_engine_error)
+        ctrl.undo_requested_by_llm.connect(self.on_llm_undo_requested)
 
     def _generate_llm_summary(self, snapshot) -> str:
         """为终局持久化生成高质量的 LLM 总结"""
@@ -268,6 +279,19 @@ class MainWindow(QMainWindow):
             f"Stockfish 无法完成走棋：\n\n{error_msg}\n\n"
             "请确认 engines/stockfish.exe 存在且能够正常运行。",
         )
+
+    def on_llm_undo_requested(self, reason: str):
+        """处理 LLM 劣势时向玩家发送的悔棋请求"""
+        self.chat_panel.append_maid_message(f"🥺 **女仆悔棋请求**：{reason}\n主人可以点击上方「悔棋」按钮体贴一下女仆哦～")
+        reply = QMessageBox.question(
+            self,
+            "女仆悔棋请求",
+            f"女仆提示：\n{reason}\n\n是否同意女仆悔棋请求？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            self.on_undo()
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
         """
@@ -450,6 +474,20 @@ class MainWindow(QMainWindow):
     def on_undo(self):
         if not self.controller.undo():
             QMessageBox.warning(self, "提示", "当前已是初始局面，无法继续悔棋。")
+            return
+
+        # 若该步为悔棋，将“玩家选择悔棋”信息打包发送给LLM
+        triggers = self.controller.teaching
+        if triggers.master_enabled and self._has_configured_llm_api():
+            snapshot = self.controller.get_snapshot()
+            custom_prompt = PromptBuilder.build_custom_prompt(
+                snapshot=snapshot,
+                triggers=triggers,
+                is_auto_move=True,
+                extra_note="【玩家选择悔棋】玩家刚刚执行了悔棋操作，回退了之前的走法。请结合回退后的最新局面提供后续思路与指导建议。",
+                game_mode_name=self.controller.modes.mode.value,
+            )
+            self._dispatch_llm_request(custom_prompt)
 
     def on_flip(self):
         self.chess_board.flip_board()
@@ -596,6 +634,10 @@ class MainWindow(QMainWindow):
 
         self.controller.search_api_url = new_config.get("search_api_url", "")
         self.controller.search_api_key = new_config.get("search_api_key", "")
+        if "custom_personas" in new_config:
+            if "llm" not in self._persisted_config:
+                self._persisted_config["llm"] = {}
+            self._persisted_config["llm"]["custom_personas"] = new_config["custom_personas"]
 
         self.controller.set_agent(self.agent)
         self._sync_llm_connection_status()
@@ -608,6 +650,7 @@ class MainWindow(QMainWindow):
 
     def _collect_current_llm_config(self) -> dict:
         """从当前 agent 收集配置, 用于预填配置对话框"""
+        custom_personas = self._persisted_config.get("llm", {}).get("custom_personas", [])
         if isinstance(self.agent, LLMAgent):
             return {
                 "api_base": self.agent.api_base,
@@ -618,10 +661,12 @@ class MainWindow(QMainWindow):
                 "reasoning_effort": self.agent.reasoning_effort,
                 "stream": self.agent.stream,
                 "show_tool_records": getattr(self.agent, "show_tool_records", False),
+                "custom_personas": custom_personas,
             }
         return {
             "search_api_url": getattr(self.controller, "search_api_url", ""),
             "search_api_key": getattr(self.controller, "search_api_key", ""),
+            "custom_personas": custom_personas,
         }
 
     def _load_persisted_settings(self) -> dict:

@@ -204,8 +204,16 @@ class OpeningBook:
 
     def get_entries_from_builtin(self, board: chess.Board, limit: int = 5) -> List[OpeningMoveEntry]:
         """从已加载的 Lichess / 内置谱表中检索走法"""
-        fen_core = " ".join(board.fen().split()[:4])
-        matched_info = self._custom_patterns.get(fen_core)
+        fen_full = board.fen()
+        fen_core = " ".join(fen_full.split()[:4])
+        matched_info = self._custom_patterns.get(fen_core) or self._custom_patterns.get(fen_full)
+        if not matched_info:
+            # 尝试仅按棋子分布 (fen 的第1个字段) 容错查找
+            piece_placement = fen_full.split()[0]
+            for k, val in self._custom_patterns.items():
+                if k.split()[0] == piece_placement:
+                    matched_info = val
+                    break
         if not matched_info:
             return []
 
@@ -256,9 +264,17 @@ class OpeningBook:
             if len(combined_moves) >= limit:
                 break
 
-        # 获取开局 ECO / 名称 (通过 fen_core 匹配 Lichess 开局库)
-        fen_core = " ".join(board.fen().split()[:4])
-        info = self._custom_patterns.get(fen_core)
+        # 获取开局 ECO / 名称 (通过 fen_core 或棋子分布匹配 Lichess 开局库)
+        fen_full = board.fen()
+        fen_core = " ".join(fen_full.split()[:4])
+        info = self._custom_patterns.get(fen_core) or self._custom_patterns.get(fen_full)
+        if not info:
+            piece_placement = fen_full.split()[0]
+            for k, val in self._custom_patterns.items():
+                if k.split()[0] == piece_placement:
+                    info = val
+                    break
+
         if info:
             eco = info.get("eco", "A00")
             name = info.get("name", "Unknown Opening")

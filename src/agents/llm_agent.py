@@ -5,7 +5,7 @@
 环境变量配置:
   LLM_API_BASE        - API 基地址 (默认: https://api.deepseek.com)
   LLM_API_KEY         - API 密钥 (默认空, 不设则回退到本地描述性回复)
-  LLM_MODEL           - 模型名称 (默认: deepseek-chat)
+  LLM_MODEL           - 模型名称 (默认: deepseek-v4-flash)
   LLM_TIMEOUT         - 请求超时秒数 (默认: 60)
   LLM_MAX_TOKENS      - 最大生成 token 数 (默认: 1024)
   LLM_REASONING_EFFORT - 思考档位 / 推理强度 (默认: "auto", 可选 "auto", "low", "medium", "high", "none")
@@ -62,7 +62,7 @@ class LLMAgent(ChessAgent):
         self.api_base = api_base or os.environ.get("LLM_API_BASE", "https://api.deepseek.com")
         # 兼容 Ollama 等本地无 Key 服务
         self.api_key = api_key or os.environ.get("LLM_API_KEY", "")
-        self.model = model or os.environ.get("LLM_MODEL", "deepseek-chat")
+        self.model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
         self.timeout = timeout
         self.max_tokens = int(os.environ.get("LLM_MAX_TOKENS", str(max_tokens)))
 
@@ -96,21 +96,30 @@ class LLMAgent(ChessAgent):
     def reply(self, request: AgentRequest) -> str:
         """根据标准请求包调用 LLM API 并返回 Markdown 回复; API 不可用时回退"""
         tool_logs: list[str] = []
+        snap = request.snapshot
+        is_game_over = bool(snap.game_over_reason)
+        # 根据局面特征判断需要调用的工具，而非每步全调
+        # 1. 处于开局阶段（走法栈较短或在开局库覆盖范围）时调用开局库
+        should_query_opening = not is_game_over and len((snap.pgn or "").split()) <= 20
+        # 2. 对弈中需要深度分析时调用引擎评估（终局或开局前几步纯书手可不调或按需调）
+        should_query_engine = not is_game_over
+
         if request.tools:
-            if getattr(request.tools, "query_opening", None) or getattr(request.tools, "read_database", None):
+            if should_query_opening and (getattr(request.tools, "query_opening", None) or getattr(request.tools, "read_database", None)):
                 tool_logs.append("query_opening")
-            if getattr(request.tools, "query_history", None):
+            if is_game_over and getattr(request.tools, "query_history", None):
                 tool_logs.append("query_history")
-            if getattr(request.tools, "read_engine_state", None):
+            if should_query_engine and getattr(request.tools, "read_engine_state", None):
                 tool_logs.append("read_engine_state")
-            if getattr(request.tools, "web_search", None):
+            # web_search 仅在用户明确询问术语/棋手/战术理论或主动提问时使用
+            if getattr(request.tools, "web_search", None) and any(k in request.user_message for k in ("搜索", "历史", "理论", "谁是", "介绍", "什么是")):
                 tool_logs.append("web_search")
 
         # 若 API Key 为空, 直接回退
         if not self.api_key:
             res = self._fallback_reply(request)
         else:
-            messages = self._build_messages(request)
+            messages = self._build_messages(request, should_query_opening=should_query_opening, should_query_engine=should_query_engine)
             try:
                 raw = self._call_chat_api(messages)
                 res = raw.strip()
@@ -123,7 +132,7 @@ class LLMAgent(ChessAgent):
 
     # ---------- 消息组装 ----------
 
-    def _build_messages(self, request: AgentRequest) -> list[dict]:
+    def _build_messages(self, request: AgentRequest, should_query_opening: bool = True, should_query_engine: bool = True) -> list[dict]:
         """将 AgentRequest 组装为 LLM Chat 消息列表
 
         消息结构:
@@ -134,7 +143,7 @@ class LLMAgent(ChessAgent):
         system_msg = request.persona_prompt or self.persona_prompt
 
         # 注入局面快照上下文 (FEN / PGN / 回合方 / 将军状态等)
-        context_block = self._build_context_block(request)
+        context_block = self._build_context_block(request, should_query_opening=should_query_opening, should_query_engine=should_query_engine)
         if context_block:
             system_msg += "\n\n" + context_block
 
@@ -150,7 +159,7 @@ class LLMAgent(ChessAgent):
         messages.append({"role": "user", "content": request.user_message})
         return messages
 
-    def _build_context_block(self, request: AgentRequest) -> str:
+    def _build_context_block(self, request: AgentRequest, should_query_opening: bool = True, should_query_engine: bool = True) -> str:
         """构建局面上下文文本块: 快照信息 + 引擎评估(可选)
 
         所有外部工具调用均包裹在 try/except 中, 确保任何异常都不影响主链路。
@@ -161,15 +170,17 @@ class LLMAgent(ChessAgent):
         snap = request.snapshot
         parts.append(self._format_snapshot(snap))
 
-        # 2. 开局库推荐走法与名称识别 (可选)
-        opening_context = self._fetch_opening_context(request)
-        if opening_context:
-            parts.append(opening_context)
+        # 2. 开局库推荐走法与名称识别 (按需调用)
+        if should_query_opening:
+            opening_context = self._fetch_opening_context(request)
+            if opening_context:
+                parts.append(opening_context)
 
-        # 3. 引擎实时评估 (仅当 tools 可用时主动读取, 失败则静默跳过)
-        engine_eval = self._fetch_engine_eval(request)
-        if engine_eval:
-            parts.append(engine_eval)
+        # 3. 引擎实时评估 (按需调用)
+        if should_query_engine:
+            engine_eval = self._fetch_engine_eval(request)
+            if engine_eval:
+                parts.append(engine_eval)
 
         return "\n\n".join(parts)
 
@@ -190,11 +201,11 @@ class LLMAgent(ChessAgent):
                 name = opening_data.get("name")
                 eco = opening_data.get("eco")
                 if name and name != "Unknown Opening":
-                    lines.append(f"【开局名称】: {name} (ECO: {eco})")
+                    lines.append(f"【开局体系与名称】: {name} (ECO: {eco})")
                 moves = opening_data.get("recommended_moves", []) or opening_data.get("moves", [])
                 if moves:
                     move_strs = [f"{m.get('san', m.get('uci'))} (权重:{m.get('weight', 0)})" for m in moves[:3]]
-                    lines.append(f"【开局库候选走法及权重】: {', '.join(move_strs)}")
+                    lines.append(f"【开局库候选理论走法及权重】: {', '.join(move_strs)}")
                 if lines:
                     return "\n".join(lines)
         except Exception:
@@ -272,8 +283,8 @@ class LLMAgent(ChessAgent):
 
     # ---------- API 通信 ----------
 
-    def _call_chat_api(self, messages: list[dict]) -> str:
-        """调用 OpenAI 兼容 /v1/chat/completions 接口, 返回回复文本 (支持 stream 与 reasoning_effort)"""
+    def _call_chat_api(self, messages: list[dict], max_retries: int = 2) -> str:
+        """调用 OpenAI 兼容 /v1/chat/completions 接口, 支持指数退避重试 (支持 stream 与 reasoning_effort)"""
         url = self._chat_endpoint()
         payload: dict[str, Any] = {
             "model": self.model,
@@ -290,29 +301,37 @@ class LLMAgent(ChessAgent):
             payload["stream"] = True
 
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "ChessMaidBot/1.0",
+        }
 
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            if self.stream:
-                return self._parse_stream_response(resp)
-            body = resp.read().decode("utf-8")
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    if self.stream:
+                        return self._parse_stream_response(resp)
+                    body = resp.read().decode("utf-8")
 
-        result = json.loads(body)
-        choices = result.get("choices", [])
-        if not choices:
-            raise ValueError("API 返回空 choices")
-        content = choices[0].get("message", {}).get("content", "")
-        if not content.strip():
-            raise ValueError("API 返回空内容")
-        return content
+                result = json.loads(body)
+                choices = result.get("choices", [])
+                if not choices:
+                    raise ValueError("API 返回空 choices")
+                content = choices[0].get("message", {}).get("content", "")
+                if not content.strip():
+                    raise ValueError("API 返回空内容")
+                return content
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    import time
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+
+        raise last_error or RuntimeError("LLM API 调用失败")
 
     def _parse_stream_response(self, resp) -> str:
         """解析 SSE (Server-Sent Events) 流式响应数据"""
@@ -365,6 +384,26 @@ class LLMAgent(ChessAgent):
         return f"{base}/models"
 
     @classmethod
+    def test_connection(cls, api_base: str, api_key: str, timeout: int = 10) -> bool:
+        """仅测试 API 连接连通性"""
+        base = (api_base or "https://api.deepseek.com").rstrip("/")
+        is_ollama = cls._is_ollama_base(base.lower())
+        url = f"{base}/api/tags" if is_ollama else (f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models")
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status in (200, 204)
+
+    @classmethod
+    def fetch_models(cls, api_base: str, api_key: str, timeout: int = 10) -> list[str]:
+        """仅拉取远端支持的模型列表"""
+        return cls.test_connection_and_fetch_models(api_base, api_key, timeout)
+
+    @classmethod
     def test_connection_and_fetch_models(cls, api_base: str, api_key: str, timeout: int = 10) -> list[str]:
         """测试连接并拉取远端支持的模型列表 (静态/类方法，支持在对话框中即时调用)"""
         base = (api_base or "https://api.deepseek.com").rstrip("/")
@@ -396,6 +435,18 @@ class LLMAgent(ChessAgent):
 
     def get_move(self, request: AgentRequest) -> Optional[str]:
         """为女仆陪练模式 (VS_MAID_LLM) 计算下一步走法 (返回 UCI 格式字符串如 'e2e4')"""
+        # 在与LLM对弈模式下，若LLM判断局势对LLM不利 (例如引擎评估落后过多), 可触发 request_undo
+        if request.tools and getattr(request.tools, "read_engine_state", None) and getattr(request.tools, "request_undo", None):
+            try:
+                state = request.tools.read_engine_state("analyse", {"depth": 8, "multipv": 1})
+                if state and state.get("available") and state.get("analysis"):
+                    cp = state["analysis"][0].get("score_cp")
+                    # 落后超过 350 cp 时判定局势严重不利，向玩家请求悔棋
+                    if cp is not None and cp < -350:
+                        request.tools.request_undo("女仆感觉当前局势落后过大陷入危机，向主人请求悔棋一步！")
+            except Exception:
+                pass
+
         # 构建获取单步走法的专属 prompt
         fen = request.snapshot.fen
         prompt = (

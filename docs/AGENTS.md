@@ -30,6 +30,7 @@ src/agents/
 | **历史对局查询与归档检索** (`query_history` / `read_database(category="history")`) | `history_store.query_database(category="history", ...)` | `limit=5, filter_useless=True` (检索已归档历史对局及总结) | 仅检索玩家正常完赛的有效对局 |
 | **引擎状态读取** (`read_engine_state`) | `stockfish_client.get_state(state_type, ...)` | `state_type="best_move"` (获取当前最优着法 UCI)<br>`state_type="analyse"` (多候选线评估、score_cp 分数与 PV 主变例)<br>`state_type="eval"` (即时静态评估值) | Agent 在生成回复或陪练走子时调用，评估深度与线程均受沙箱限制 |
 | **联网搜索工具** (`web_search`) | `game_controller._agent_web_search(query)` | `query="国际象棋 西西里防御 纳道尔夫变例"` | 为 LLM 提供开放 API 检索国际象棋战术理论与知识摘要 |
+| **向玩家发送悔棋请求** (`request_undo`) | `game_controller._agent_request_undo(reason)` | `reason="局势落后过大"` | 与LLM对弈模式下，LLM判断局势不利时向玩家发送悔棋请求 |
 
 ---
 

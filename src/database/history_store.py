@@ -28,7 +28,7 @@ class HistoryStore:
         result: str = "*",
         llm_summary: Optional[str] = None,
     ) -> Optional[Path]:
-        """保存一局棋局文件 (PGN + 可选 LLM 总结内容), 仅在正常完赛时存盘, 返回文件路径或 None"""
+        """保存一局棋局文件 (标准 PGN 格式并在尾部包含可选 LLM 总结), 仅在正常完赛时存盘, 返回文件路径或 None"""
         if not self.is_useful_game(pgn_text, result=result):
             return None
 
@@ -46,10 +46,11 @@ class HistoryStore:
             counter += 1
 
         full_content = pgn_text.strip()
-        if llm_summary:
+        if llm_summary and llm_summary.strip():
+            # 标准简洁结构：使用标准 PGN 注释段
             full_content += f"\n\n% --- LLM GAME SUMMARY ---\n% {llm_summary.strip()}\n"
 
-        path.write_text(full_content, encoding="utf-8")
+        path.write_text(full_content + "\n", encoding="utf-8")
         return path
 
     @staticmethod
