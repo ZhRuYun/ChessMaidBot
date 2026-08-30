@@ -395,18 +395,25 @@ class LLMConfigDialog(QDialog):
         self.key_input.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
 
     def _on_test_connection(self):
-        """测试 API 连接"""
+        """测试 API 连接 (复用统一入口 test_connection_and_fetch_models)"""
         api_base = self.base_input.text().strip() or "https://api.deepseek.com"
         api_key = self.key_input.text().strip()
 
         self.btn_test_conn.setEnabled(False)
         self.btn_test_conn.setText("测试中...")
         try:
-            ok = LLMAgent.test_connection(api_base, api_key, timeout=8)
-            if ok:
-                QMessageBox.information(self, "连接成功", "API 服务连接正常！")
+            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
+            if models:
+                QMessageBox.information(
+                    self, "连接成功",
+                    f"API 服务连接正常！共发现 {len(models)} 个可用模型。\n"
+                    "可点击「拉取模型」填入下拉列表。"
+                )
             else:
-                QMessageBox.warning(self, "连接异常", "API 响应异常，请检查配置。")
+                QMessageBox.warning(
+                    self, "连接异常",
+                    "API 可达，但未返回任何模型。请检查 API Key 权限或 Base URL 是否正确。"
+                )
         except Exception as e:
             QMessageBox.warning(
                 self,
@@ -418,14 +425,14 @@ class LLMConfigDialog(QDialog):
             self.btn_test_conn.setText("测试连接")
 
     def _on_fetch_models(self):
-        """拉取远端模型列表"""
+        """拉取远端模型列表 (复用统一入口 test_connection_and_fetch_models)"""
         api_base = self.base_input.text().strip() or "https://api.deepseek.com"
         api_key = self.key_input.text().strip()
 
         self.btn_fetch_models.setEnabled(False)
         self.btn_fetch_models.setText("拉取中...")
         try:
-            models = LLMAgent.fetch_models(api_base, api_key, timeout=8)
+            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
             if models:
                 self.remote_models_combo.blockSignals(True)
                 self.remote_models_combo.clear()

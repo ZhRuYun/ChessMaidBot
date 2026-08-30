@@ -127,27 +127,56 @@ class HistoryStore:
 
     def query_database(self, category: str = "history", **kwargs) -> Dict[str, Any]:
         """为 Agent 与外部模块提供的统一数据库查询接口
-        
+
         支持分类:
-          - "history": 历史对局查询与归档检索 (最近对局列表与棋谱+总结)
+          - "history": 历史对局查询与归档检索 (最近对局列表与棋谱+总结;
+            可选 query 关键词, 在总结/棋谱上做轻量相关性检索, RAG-lite)
           - "opening": 开局库查询候选走法及权重 (ECO/开局名称与推荐候选着法及权重)
         """
         category = category.lower()
         if category == "history":
             limit = kwargs.get("limit", 5)
             filter_useless = kwargs.get("filter_useless", True)
+            query = (kwargs.get("query") or "").strip()
             games = self.list_games(filter_useless=filter_useless)
-            recent_games = games[-limit:] if limit > 0 else games
-            game_summaries = []
-            for g in recent_games:
-                raw_text = self.load_text(g)
+            entries = []
+            for g in games:
+                try:
+                    raw_text = self.load_text(g)
+                except Exception:
+                    continue
                 parsed = self.parse_game_file(raw_text)
-                game_summaries.append({
+                entries.append({
                     "filename": g.name,
                     "pgn_preview": parsed["pgn"][:180],
                     "llm_summary": parsed["summary"],
+                    "_text": (parsed["summary"] + "\n" + parsed["pgn"][:400]).lower(),
                 })
-            return {"category": "history", "count": len(games), "games": game_summaries}
+
+            if query:
+                # RAG-lite: 纯关键词重叠评分排序 (零第三方依赖), 召回相似历史棋局
+                terms = [t for t in query.lower().split() if len(t) >= 2]
+                scored = []
+                for e in entries:
+                    score = sum(1 for t in terms if t in e["_text"])
+                    if score > 0:
+                        scored.append((score, e))
+                scored.sort(key=lambda x: (-x[0], x[1]["filename"]))
+                entries = [e for _, e in scored]
+                relevance = "keyword"
+            else:
+                entries = entries[-limit:] if limit > 0 else entries
+                relevance = "recent"
+
+            for e in entries:
+                e.pop("_text", None)
+            recent_games = entries[:limit] if limit > 0 else entries
+            return {
+                "category": "history",
+                "count": len(games),
+                "relevance": relevance,
+                "games": recent_games,
+            }
         elif category == "opening":
             fen = kwargs.get("fen", "")
             limit = kwargs.get("limit", 5)

@@ -6,11 +6,19 @@ LLM 配置通过持久化 settings.json 与环境变量读取:
   未配置 API Key 时, LLMAgent 自动降级为本地描述性回复, 不影响程序运行。
 启动时自动检查 Stockfish 引擎与 Lichess 开局数据库是否完备，缺失时自动安装补齐。
 """
+import logging
 import sys
 from PySide6.QtWidgets import QApplication
 
 from src.config import ENGINE_PATH, DEFAULT_OPENINGS_JSON_PATH
 from src.gui.main_window import MainWindow
+
+# 统一日志初始化: 全模块可观测 (LLM 失败/降级/缓存命中/用量等关键事件均落日志)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 
 def ensure_assets_ready():

@@ -13,6 +13,7 @@
     (强杀持锁线程会导致共享引擎死锁)
 """
 import json
+import logging
 import threading
 import urllib.parse
 import urllib.request
@@ -29,11 +30,17 @@ from ..engine.stockfish_client import shared_engine
 from .game_modes import GameMode, GameModeManager
 from .teaching_triggers import TeachingTriggers
 
+logger = logging.getLogger("chessmaid.controller")
+
 
 class EngineWorker(QThread):
-    """用于异步计算 Stockfish 引擎或 Maid LLM 最佳着法的后台工作线程"""
-    move_computed = Signal(str, int)  # (UCI 着法, 代际号)
-    failed = Signal(str, int)         # (错误信息, 代际号)
+    """用于异步计算 Stockfish 引擎或 Maid LLM 最佳着法的后台工作线程
+
+    线程安全: AgentRequest 在主线程预构建 (快照冻结), 本线程不再触碰棋局状态;
+    cancel_event 由控制器置位, 贯通到 LLM HTTP 读取循环及时中止, 避免空烧 Token。
+    """
+    move_computed = Signal(str, int, str)  # (UCI 着法, 代际号, 着法来源 "llm"/"engine")
+    failed = Signal(str, int)              # (错误信息, 代际号)
 
     def __init__(
         self,
@@ -43,8 +50,9 @@ class EngineWorker(QThread):
         use_elo: bool,
         generation: int = 0,
         is_maid_llm: bool = False,
-        agent_request_builder: Optional[Callable[[], AgentRequest]] = None,
+        agent_request: Optional[AgentRequest] = None,
         agent: Optional[Any] = None,
+        cancel_event: Optional[threading.Event] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -54,8 +62,9 @@ class EngineWorker(QThread):
         self.use_elo = use_elo
         self.generation = generation
         self.is_maid_llm = is_maid_llm
-        self.agent_request_builder = agent_request_builder
+        self.agent_request = agent_request
         self.agent = agent
+        self.cancel_event = cancel_event
 
     def _best_move_via_engine(self) -> Optional[str]:
         """通过共享引擎进程计算最佳着法 (线程安全串行)"""
@@ -71,22 +80,28 @@ class EngineWorker(QThread):
 
     def run(self):
         try:
-            if self.is_maid_llm and self.agent and self.agent_request_builder:
-                req = self.agent_request_builder()
-                if hasattr(self.agent, "get_move"):
-                    uci_move = self.agent.get_move(req)
-                else:
-                    uci_move = None
+            if self.is_maid_llm and self.agent and self.agent_request:
+                is_cancelled = (lambda: self.cancel_event.is_set()) if self.cancel_event else None
+                uci_move = self.agent.get_move(self.agent_request, is_cancelled=is_cancelled)
+                source = getattr(self.agent, "last_move_source", None) or "engine"
                 if uci_move:
-                    self.move_computed.emit(uci_move, self.generation)
+                    self.move_computed.emit(uci_move, self.generation, source)
                     return
+                # LLM 与内置引擎工具均未给出着法 -> 走通用引擎通道
+                uci_move = self._best_move_via_engine()
+                if uci_move:
+                    self.move_computed.emit(uci_move, self.generation, "engine")
+                else:
+                    self.failed.emit("引擎未能计算出合法着法", self.generation)
+                return
 
             uci_move = self._best_move_via_engine()
             if uci_move:
-                self.move_computed.emit(uci_move, self.generation)
+                self.move_computed.emit(uci_move, self.generation, "engine")
             else:
                 self.failed.emit("引擎未能计算出合法着法", self.generation)
         except Exception as e:
+            logger.error("EngineWorker 执行失败: %s", e, exc_info=True)
             self.failed.emit(str(e), self.generation)
 
 
@@ -101,6 +116,7 @@ class GameController(QObject):
     engine_thinking_changed = Signal(bool) # 引擎是否在思考中 (用于锁定 UI 交互)
     engine_error = Signal(str)             # 引擎启动或计算失败的可见错误
     undo_requested_by_llm = Signal(str)    # LLM 劣势时向玩家发起的悔棋请求理由
+    llm_fallback_used = Signal(str)        # LLM 走棋不可用时降级引擎代走的来源披露
 
     def __init__(self, history_store: Optional[HistoryStore] = None, parent=None):
         super().__init__(parent)
@@ -112,6 +128,7 @@ class GameController(QObject):
         self._finalized = False
         self._engine_thread: Optional[EngineWorker] = None
         self._engine_generation = 0  # 引擎思考代际号: 每次停止/重置自增, 旧线程结果按代际丢弃
+        self._engine_cancel_event: Optional[threading.Event] = None  # 在途 LLM/引擎思考的取消标志
         self._llm_summary_provider: Optional[Callable[[PositionSnapshot], str]] = None
         self._agent: Optional[Any] = None
         # 联网搜索工具的自定义接口配置 (由 MainWindow 依据持久化 settings.json 注入)
@@ -166,6 +183,15 @@ class GameController(QObject):
         # 允许旧线程与新线程并存: 引擎调用经 shared_engine 串行, 结果按代际丢弃,
         # 避免旧实现 terminate() 强杀线程导致的死锁与协议失步风险。
         is_maid_llm = (self.modes.mode == GameMode.VS_MAID_LLM)
+        # 快照与请求在主线程预构建 (冻结), 后台线程不再读取可变棋局状态, 消除竞态
+        agent_request = None
+        if is_maid_llm and self._agent is not None:
+            try:
+                agent_request = self.build_agent_request(user_message="", persona_prompt="")
+            except Exception:
+                agent_request = None
+        cancel_event = threading.Event()
+        self._engine_cancel_event = cancel_event
         self._engine_generation += 1
         generation = self._engine_generation
         self.engine_thinking_changed.emit(True)
@@ -176,25 +202,30 @@ class GameController(QObject):
             use_elo=self.modes.use_elo,
             generation=generation,
             is_maid_llm=is_maid_llm,
-            agent_request_builder=lambda: self.build_agent_request(user_message="", persona_prompt=""),
+            agent_request=agent_request,
             agent=self._agent,
+            cancel_event=cancel_event,
             parent=self,
         )
         self._engine_thread.move_computed.connect(self._on_engine_move_ready)
         self._engine_thread.failed.connect(self._on_engine_move_failed)
         self._engine_thread.start()
 
-    def _on_engine_move_ready(self, uci_move: str, generation: int):
+    def _on_engine_move_ready(self, uci_move: str, generation: int, source: str = "engine"):
         if generation != self._engine_generation:
             return  # 过期结果 (对局已被重置/悔棋), 直接丢弃
         self.engine_thinking_changed.emit(False)
+        if source != "llm":
+            # LLM 不可用降级代走: 明确向 UI 披露, 避免用户误认为 LLM 在走棋
+            logger.warning("LLM 走棋不可用，本步由 %s 代走", source)
+            self.llm_fallback_used.emit(source)
         try:
             move = chess.Move.from_uci(uci_move)
         except ValueError as exc:
-            self.engine_error.emit(f"Stockfish 返回了无效着法 {uci_move!r}: {exc}")
+            self.engine_error.emit(f"引擎返回了无效着法 {uci_move!r}: {exc}")
             return
         if not self.apply_move(move):
-            self.engine_error.emit(f"Stockfish 返回的着法 {uci_move} 在当前局面中不合法。")
+            self.engine_error.emit(f"引擎返回的着法 {uci_move} 在当前局面中不合法。")
 
     def _on_engine_move_failed(self, error_msg: str, generation: int):
         if generation != self._engine_generation:
@@ -319,8 +350,13 @@ class GameController(QObject):
         """使在途的引擎思考失效。
 
         不再使用 terminate() 强杀线程 (存在共享引擎锁悬挂与 UCI 协议失步风险),
-        改为自增代际号: 仍在运行的后台线程算完后其结果会因代际不匹配而被丢弃。
+        改为自增代际号: 仍在运行的后台线程算完后其结果会因代际不匹配而被丢弃;
+        同时置位 cancel_event, 让 LLM HTTP 读取循环立即中止, 不再空烧 Token。
         """
+        cancel_event = getattr(self, "_engine_cancel_event", None)
+        if cancel_event is not None:
+            cancel_event.set()
+            self._engine_cancel_event = None
         if self._engine_thread is not None:
             self._engine_generation += 1
             self._engine_thread = None
@@ -374,8 +410,15 @@ class GameController(QObject):
                 llm_summary = None
                 if provider:
                     try:
-                        llm_summary = provider(snapshot)
-                    except Exception:
+                        llm_summary = provider(snapshot, result_str)
+                    except TypeError:
+                        # 兼容旧签名 provider(snapshot)
+                        try:
+                            llm_summary = provider(snapshot)
+                        except Exception:
+                            llm_summary = None
+                    except Exception as e:
+                        logger.warning("LLM 终局总结生成失败: %s", e, exc_info=True)
                         llm_summary = None
                 if not llm_summary:
                     llm_summary = f"对局结束，结果为 {result_str}。终局原因: {status.get('reason', '')}"
@@ -385,8 +428,8 @@ class GameController(QObject):
                         result=result_str,
                         llm_summary=llm_summary,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error("棋局归档失败: %s", e, exc_info=True)
 
             # 后台守护线程落盘: LLM 总结为网络请求, 最长可达数十秒, 绝不能卡住界面
             threading.Thread(target=_do_save, daemon=True, name="game-archive").start()
@@ -517,40 +560,46 @@ class GameController(QObject):
             game_over_reason=status["reason"] if status["is_over"] else "",
         )
 
-    def _agent_query_opening(self, fen: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
-        """开局库查询候选走法及权重"""
-        fen_to_query = fen or self.board_state.get_fen()
+    def _agent_query_opening(self, fen: Optional[str] = None, limit: int = 5, *, base_fen: str = "") -> Dict[str, Any]:
+        """开局库查询候选走法及权重 (fen 缺省时使用请求构建期冻结的快照 FEN, 不读实时棋盘)"""
+        fen_to_query = fen or base_fen or self.board_state.get_fen()
         return self.history_store.query_database(category="opening", fen=fen_to_query, limit=limit)
 
-    def _agent_query_history(self, limit: int = 5, filter_useless: bool = True) -> Dict[str, Any]:
-        """历史对局查询与归档检索"""
-        return self.history_store.query_database(category="history", limit=limit, filter_useless=filter_useless)
+    def _agent_query_history(self, limit: int = 5, filter_useless: bool = True, query: Optional[str] = None) -> Dict[str, Any]:
+        """历史对局查询与归档检索 (可按关键词检索相似历史棋局)"""
+        kwargs: Dict[str, Any] = {"limit": limit, "filter_useless": filter_useless}
+        if query:
+            kwargs["query"] = query
+        return self.history_store.query_database(category="history", **kwargs)
 
-    def _agent_read_database(self, category: str = "opening", params: Optional[Dict[str, Any]] = None) -> Any:
+    def _agent_read_database(self, category: str = "opening", params: Optional[Dict[str, Any]] = None, *, base_fen: str = "") -> Any:
         """为 LLM 提供的数据库读取统一入口 (支持 opening 与 history)"""
         params = dict(params or {})
         if category == "opening" and "fen" not in params:
-            params["fen"] = self.board_state.get_fen()
+            params["fen"] = base_fen or self.board_state.get_fen()
         return self.history_store.query_database(category=category, **params)
 
-    def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None) -> Any:
+    def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None, *, base_fen: str = "") -> Any:
         """为 LLM 提供的引擎状态读取工具 (支持 best_move / analyse / eval)
 
-        经共享引擎进程执行; 引擎缺失或异常时返回 available=False 的降级字典,
-        保证 LLM 主链路不受影响。
+        经共享引擎进程执行; 局面 FEN 优先取调用参数, 缺省回退到请求构建期冻结的
+        快照 FEN (而非实时棋盘), 保证后台线程不与 UI 写路径竞态。
+        引擎缺失或异常时返回 available=False 的降级字典, 保证 LLM 主链路不受影响。
         """
-        params = params or {}
+        params = dict(params or {})
+        fen = params.pop("fen", None) or base_fen or self.board_state.get_fen()
 
         def _read(client):
             if self.modes.use_elo and self.modes.target_elo is not None:
                 client.set_elo(self.modes.target_elo)
             else:
                 client.set_skill_level(self.modes.engine_skill)
-            return client.get_state(fen=self.board_state.get_fen(), state_type=state_type, **params)
+            return client.get_state(fen=fen, state_type=state_type, **params)
 
         try:
             return shared_engine.call(_read)
         except Exception as e:
+            logger.warning("Agent 引擎读取失败 (%s): %s", state_type, e)
             return {"available": False, "error": str(e)}
 
     def _agent_web_search(self, query: str) -> str:
@@ -562,10 +611,10 @@ class GameController(QObject):
         # 1. 若配置了自定义搜索 API (例如 Tavily / Serper / 自建搜索代理)
         if api_url:
             try:
-                headers = {"User-Agent": "ChessMaidBot/1.0", "Content-Type": "application/json"}
-                if api_key:
+                headers = {"User-Agent": "ChessMaidBot/2.0", "Content-Type": "application/json"}
+                # 密钥仅通过单一 Authorization 头下发, 且仅对 https 端点发送, 防止明网泄露
+                if api_key and api_url.lower().startswith("https://"):
                     headers["Authorization"] = f"Bearer {api_key}"
-                    headers["api-key"] = api_key
 
                 payload = json.dumps({"query": query, "q": query}).encode("utf-8")
                 req = urllib.request.Request(api_url, data=payload, headers=headers)
@@ -575,36 +624,41 @@ class GameController(QObject):
                     if isinstance(data, dict):
                         if "results" in data and isinstance(data["results"], list) and data["results"]:
                             snippets = [str(r.get("content") or r.get("snippet") or r.get("title", "")) for r in data["results"][:3]]
-                            return f"搜索结果: {' | '.join(filter(bool, snippets))}"
+                            return f"搜索结果: {' | '.join(filter(bool, snippets))}"[:1200]
                         if "abstract" in data:
-                            return f"搜索结果: {data['abstract']}"
+                            return f"搜索结果: {data['abstract']}"[:1200]
                         if "answer" in data:
-                            return f"搜索结果: {data['answer']}"
+                            return f"搜索结果: {data['answer']}"[:1200]
                     return f"搜索结果: {json.dumps(data, ensure_ascii=False)[:300]}"
-            except Exception:
+            except Exception as e:
                 # 自定义接口出错时自动降级到 DuckDuckGo / Wikipedia 免 key 开放接口
-                pass
+                logger.info("自定义搜索接口失败, 降级开放搜索: %s", e)
 
         # 2. 默认免 API Key 开放搜索服务 (DuckDuckGo Instant Answer)
         try:
             url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
-            req = urllib.request.Request(url, headers={"User-Agent": "ChessMaidBot/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "ChessMaidBot/2.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             abstract = data.get("AbstractText", "")
             if abstract:
-                return f"搜索结果: {abstract}"
+                return f"搜索结果: {abstract}"[:1200]
             related = data.get("RelatedTopics", [])
             if related and isinstance(related[0], dict) and "Text" in related[0]:
-                return f"搜索结果: {related[0]['Text']}"
+                return f"搜索结果: {related[0]['Text']}"[:1200]
             return f"未检索到关于 '{query}' 的直接摘要信息。"
         except Exception as e:
             return f"联网搜索请求失败: {e}"
 
-    def evaluate_game_moves_quality(self, depth: int = 10) -> List[Dict[str, Any]]:
+    def evaluate_game_moves_quality(self, depth: int = 10, records: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
         """全盘评估走法质量 (Coach Mode):
         计算每步棋的胜率/评估分落差并打标 (Best, Excellent, Good, Inaccuracy, Mistake, Blunder)
+
+        线程安全: 传入 records (深拷贝) 时在副本上评估且不广播信号,
+        供后台归档线程调用而不与 UI 线程读写竞态; 缺省在主线程直接评估实时记录。
         """
+        source_records = records if records is not None else self.history.records
+        emit_changes = records is None
         evaluated_steps = []
         board = chess.Board()
         prev_eval = 0.0  # 初始白方均势分 cp
@@ -613,7 +667,7 @@ class GameController(QObject):
             return client.get_state(fen_str, state_type="analyse", depth=depth, multipv=1)
 
         # 遍历每一步走法
-        for rec in self.history.records:
+        for rec in source_records:
             # 1. 白方着法评估
             if rec.white_san and rec.white_san != "...":
                 try:
@@ -700,7 +754,8 @@ class GameController(QObject):
                 except Exception:
                     pass
 
-        self.history_changed.emit(self.history.records)
+        if emit_changes:
+            self.history_changed.emit(self.history.records)
         return evaluated_steps
 
     def _agent_request_undo(self, reason: str = "局势不利") -> bool:
@@ -716,18 +771,25 @@ class GameController(QObject):
         persona_prompt: str,
         dialog_history: Optional[List[dict]] = None,
     ) -> AgentRequest:
+        """构建标准 Agent 请求。
+
+        线程安全: 快照在构建时冻结; 所有工具闭包优先使用该快照 FEN,
+        后台线程调用工具时不再读取实时棋盘状态 (消除与 UI 写路径的竞态)。
+        """
+        snapshot = self.get_snapshot()
+        frozen_fen = snapshot.fen
         tools = AgentTools(
-            query_opening=self._agent_query_opening,
+            query_opening=lambda fen=None, limit=5: self._agent_query_opening(fen, limit, base_fen=frozen_fen),
             query_history=self._agent_query_history,
-            read_database=self._agent_read_database,
-            read_engine_state=self._agent_read_engine_state,
+            read_database=lambda category="opening", params=None: self._agent_read_database(category, params, base_fen=frozen_fen),
+            read_engine_state=lambda state_type="best_move", params=None: self._agent_read_engine_state(state_type, params, base_fen=frozen_fen),
             web_search=self._agent_web_search,
             request_undo=self._agent_request_undo,
         )
         return AgentRequest(
             user_message=user_message,
             persona_prompt=persona_prompt,
-            snapshot=self.get_snapshot(),
+            snapshot=snapshot,
             dialog_history=list(dialog_history or []),
             tools=tools,
             game_mode=self.modes.mode.value,

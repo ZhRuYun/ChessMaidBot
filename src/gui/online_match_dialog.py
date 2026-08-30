@@ -162,7 +162,7 @@ class OnlineMatchDialog(QDialog):
         ip_row = QHBoxLayout()
         self.lbl_ip = QLabel("房主 IP 地址:")
         self.ip_input = QLineEdit("127.0.0.1")
-        self.ip_input.setEnabled(False)  # 房主无需输入 IP
+        self.ip_input.setEnabled(True)  # 房主可编辑监听绑定地址 (默认 127.0.0.1)
         ip_row.addWidget(self.lbl_ip)
         ip_row.addWidget(self.ip_input, stretch=1)
         net_layout.addLayout(ip_row)
@@ -204,14 +204,17 @@ class OnlineMatchDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _on_role_toggled(self, is_host: bool):
-        self.ip_input.setEnabled(not is_host)
+        # 房主模式下保持可编辑: 默认 127.0.0.1 仅本机, 高级用户可显式改为 0.0.0.0 开放局域网
+        self.ip_input.setEnabled(True)
         if is_host:
             self.lbl_ip.setText("监听绑定 IP:")
-            self.ip_input.setText("0.0.0.0")
+            self.ip_input.setText("127.0.0.1")
+            self.ip_input.setToolTip("默认仅本机可连 (127.0.0.1)。如需局域网对战可改为 0.0.0.0，但服务无鉴权，请注意风险。")
             self.rb_white.setChecked(True)
         else:
             self.lbl_ip.setText("房主 IP 地址:")
             self.ip_input.setText("127.0.0.1")
+            self.ip_input.setToolTip("")
             self.rb_black.setChecked(True)
 
     def _on_confirm(self):
@@ -226,7 +229,7 @@ class OnlineMatchDialog(QDialog):
 
         self.result_data = {
             "is_host": is_host,
-            "host": ip or ("0.0.0.0" if is_host else "127.0.0.1"),
+            "host": ip or ("127.0.0.1" if is_host else "127.0.0.1"),
             "port": port,
             "my_side": my_side,
         }

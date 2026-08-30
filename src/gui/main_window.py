@@ -2,7 +2,15 @@
 主窗口 (模块1 - GUI 装配层)
 负责协调 UI 布局（左侧:记谱表，中央:棋盘，右侧:LLM 对话窗口）
 处理用户交互（新对局、悔棋、翻转、认输、求和、一键导出 PGN+FEN、主动询问LLM、落子自动触发教学）
+
+LLM 工程化:
+  - 自动教学/主动询问请求接入语义缓存 (同局面+同开关直接复用回复, 削减重复 Token)
+  - 短期记忆只存「用户意图标签 + 女仆回复正文」, 不再存含完整 PGN 的提示词 (Token 瘦身)
+  - 终局总结走两段式流水线 (教练结构化分析 -> 女仆人格化改写) 并回填长期画像
 """
+import copy
+import inspect
+import logging
 from typing import Optional
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter, QFrame,
@@ -15,6 +23,7 @@ import json
 from ..agents.base import ChessAgent, AgentRequest
 from ..agents.llm_agent import LLMAgent
 from ..agents.prompt_builder import PromptBuilder
+from ..agents.semantic_cache import SemanticCache
 from ..agents.memory import ShortTermMemory, LongTermMemory
 from ..config import DEFAULT_MAID_PERSONA, CONFIG_FILE_PATH
 from ..controller.game_controller import GameController
@@ -24,6 +33,8 @@ from .chess_board import ChessBoardWidget
 from .move_history_panel import MoveHistoryPanel
 from .chat_panel import ChatPanel
 from .control_bar import ControlBar
+
+logger = logging.getLogger("chessmaid.gui")
 
 
 class LLMWorker(QThread):
@@ -51,7 +62,9 @@ class LLMWorker(QThread):
             def _check_cancelled() -> bool:
                 return self._is_cancelled
 
-            if hasattr(self.agent, "reply") and "is_cancelled" in self.agent.reply.__code__.co_varnames:
+            # 依据实际签名决定是否传递取消回调 (稳健于接口差异)
+            params = inspect.signature(self.agent.reply).parameters
+            if "is_cancelled" in params:
                 reply = self.agent.reply(self.request, on_chunk=_on_chunk, is_cancelled=_check_cancelled)
             else:
                 reply = self.agent.reply(self.request, on_chunk=_on_chunk)
@@ -59,6 +72,7 @@ class LLMWorker(QThread):
             if not self._is_cancelled:
                 self.response_ready.emit(reply, self.generation)
         except Exception as e:
+            logger.error("LLMWorker 执行失败: %s", e, exc_info=True)
             if not self._is_cancelled:
                 self.failed.emit(str(e), self.generation)
 
@@ -96,6 +110,9 @@ class MainWindow(QMainWindow):
         # 双层记忆系统
         self.short_memory = ShortTermMemory(max_turns=12)
         self.long_memory = LongTermMemory()
+        # 语义缓存: 同局面+同教学开关的确定性请求直接复用回复 (自动教学/主动询问)
+        self._semantic_cache = SemanticCache(maxsize=128)
+        self._pending_cache_key: Optional[str] = None
         # 加载持久化配置
         self._persisted_config = self._load_persisted_settings()
         # 当前生效的人设 Prompt (可被用户通过「人设」按钮运行时修改)
@@ -259,20 +276,47 @@ class MainWindow(QMainWindow):
         ctrl.engine_thinking_changed.connect(self.on_engine_thinking)
         ctrl.engine_error.connect(self.on_engine_error)
         ctrl.undo_requested_by_llm.connect(self.on_llm_undo_requested)
+        ctrl.llm_fallback_used.connect(self.on_llm_fallback_used)
 
-    def _generate_llm_summary(self, snapshot) -> str:
-        """为终局持久化生成高质量的 LLM 战术复盘总结报告 (Coach Mode)"""
+    def _generate_llm_summary(self, snapshot, result_str: str = "*") -> str:
+        """为终局持久化生成高质量的 LLM 战术复盘总结报告 (两段式: 教练分析 -> 女仆改写)
+
+        在后台归档线程执行:
+          - 全盘着法质量评估在记录深拷贝副本上运行, 不与 UI 线程竞态
+          - 评估结果同步回填长期记忆画像 (开局偏好 / 失误类型), 激活画像档案
+        """
+        evaluated_moves = []
         try:
-            # 1. 运行全盘着法质量评估
-            evaluated_moves = self.controller.evaluate_game_moves_quality(depth=8)
-            blunders = [m for m in evaluated_moves if m.get("quality") in ("Blunder", "Mistake")]
-            
-            blunder_summary = ""
-            if blunders:
-                b_lines = [f"- 第 {b['ply']} 半回合 ({b['turn']} 走 {b['move']}): 判定为 {b['quality']} (评估损失 {b['delta_cp']} cp)" for b in blunders[:4]]
-                blunder_summary = "\n【引擎全盘复盘关键转折与失误点】：\n" + "\n".join(b_lines)
+            records_copy = copy.deepcopy(self.controller.history.records)
+            evaluated_moves = self.controller.evaluate_game_moves_quality(depth=8, records=records_copy)
+        except Exception as e:
+            logger.warning("全盘着法质量评估失败: %s", e, exc_info=True)
+
+        blunders = [m for m in evaluated_moves if m.get("quality") in ("Blunder", "Mistake")]
+
+        # 长期画像回填: 开局名称 (开局库识别) + 失误着法标签
+        opening_name = None
+        try:
+            info = self.controller.history_store.opening_book.query_opening(snapshot.fen)
+            if isinstance(info, dict) and info.get("in_book"):
+                name = info.get("name")
+                if name and name != "Unknown Opening":
+                    opening_name = name
         except Exception:
-            blunder_summary = ""
+            opening_name = None
+        try:
+            self.long_memory.record_game_result(
+                result=result_str,
+                opening=opening_name,
+                blunders=[f"{b['move']}({b['quality']})" for b in blunders[:5]],
+            )
+        except Exception as e:
+            logger.warning("长期画像回填失败: %s", e)
+
+        blunder_summary = ""
+        if blunders:
+            b_lines = [f"- 第 {b['ply']} 半回合 ({b['turn']} 走 {b['move']}): 判定为 {b['quality']} (评估损失 {b['delta_cp']} cp)" for b in blunders[:4]]
+            blunder_summary = "\n【引擎全盘复盘关键转折与失误点】：\n" + "\n".join(b_lines)
 
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
@@ -285,6 +329,7 @@ class MainWindow(QMainWindow):
             persona_prompt=self.current_persona,
             dialog_history=self.short_memory.get_messages(),
         )
+        req.two_stage = True  # 教练结构化分析 -> 女仆人格化改写
         return self.agent.reply(req)
 
     # ---------- 调度层信号处理 ----------
@@ -315,18 +360,15 @@ class MainWindow(QMainWindow):
             "请确认 engines/stockfish.exe 存在且能够正常运行。",
         )
 
+    def on_llm_fallback_used(self, source: str):
+        """LLM 走棋不可用、由引擎降级代走时的非阻断披露"""
+        self.chat_panel.append_maid_message(f"*(LLM 走棋暂不可用，本步已由 {source} 引擎代走)*")
+
     def on_llm_undo_requested(self, reason: str):
-        """处理 LLM 劣势时向玩家发送的悔棋请求"""
-        self.chat_panel.append_maid_message(f"🥺 **女仆悔棋请求**：{reason}\n主人可以点击上方「悔棋」按钮体贴一下女仆哦～")
-        reply = QMessageBox.question(
-            self,
-            "女仆悔棋请求",
-            f"女仆提示：\n{reason}\n\n是否同意女仆悔棋请求？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+        """处理 LLM 劣势时向玩家发送的悔棋请求 (非模态: 不打断引擎思考与事件循环)"""
+        self.chat_panel.append_maid_message(
+            f"**女仆悔棋请求**：{reason}\n主人可以点击上方「悔棋」按钮体贴一下女仆哦～"
         )
-        if reply == QMessageBox.Yes:
-            self.on_undo()
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
         """
@@ -344,20 +386,30 @@ class MainWindow(QMainWindow):
             return
 
         # 构建内部教学 prompt。它只发送给模型，不写入聊天展示区。
+        # 语义缓存键 = 局面 + 教学开关 + 模式 (确定性请求可复用回复)
         snapshot = self.controller.get_snapshot()
+        cache_key = SemanticCache.make_key(
+            "auto_teach", snapshot.fen,
+            triggers.master_enabled, triggers.eval_current_position,
+            triggers.suggest_moves, triggers.eval_history_moves,
+            triggers.game_over_summary, self.controller.modes.mode.value,
+        )
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
             triggers=triggers,
             is_auto_move=True,
             game_mode_name=self.controller.modes.mode.value,
         )
-        self._dispatch_llm_request(custom_prompt)
+        self._dispatch_llm_request(
+            custom_prompt,
+            memory_label=f"[落子自动教学] 最近一步 {san}",
+            cache_key=cache_key,
+        )
 
     def on_game_over(self, status: dict):
         result = status.get("result", "*")
         reason = status.get("reason", "")
-        # 更新长期记忆画像
-        self.long_memory.record_game_result(result=result)
+        # 长期画像 (开局/失误) 由 _generate_llm_summary 在归档线程结合评估结果统一回填
         self.chat_panel.append_maid_message(f"**对局结束！**<br>结果: `{result}` - {reason}")
         QMessageBox.information(self, "对局结束", f"结果: {result}\n原因: {reason}")
 
@@ -475,7 +527,9 @@ class MainWindow(QMainWindow):
         if is_host:
             if self._online_server is not None:
                 self._online_server.stop()
-            self._online_server = EmbeddedOnlineServer(host="0.0.0.0", port=port)
+            # 默认仅绑定回环地址; 如需局域网对战, 由用户在对话框中显式输入 0.0.0.0
+            bind_host = host if host else "127.0.0.1"
+            self._online_server = EmbeddedOnlineServer(host=bind_host, port=port)
             self._online_server.start()
 
             if self._online_client is not None:
@@ -525,7 +579,10 @@ class MainWindow(QMainWindow):
                 extra_note="【玩家选择悔棋】玩家刚刚执行了悔棋操作，回退了之前的走法。请结合回退后的最新局面提供后续思路与指导建议。",
                 game_mode_name=self.controller.modes.mode.value,
             )
-            self._dispatch_llm_request(custom_prompt)
+            self._dispatch_llm_request(
+                custom_prompt,
+                memory_label="[悔棋] 玩家回退了最近走法",
+            )
 
     def on_flip(self):
         self.chess_board.flip_board()
@@ -776,10 +833,16 @@ class MainWindow(QMainWindow):
 
     def on_ask_llm_requested(self):
         """
-        要求4：主动询问 LLM 按钮触发的定制 prompt
+        要求4：主动询问 LLM 按钮触发的定制 prompt (接入语义缓存)
         """
         triggers = self.controller.teaching
         snapshot = self.controller.get_snapshot()
+        cache_key = SemanticCache.make_key(
+            "ask_llm", snapshot.fen,
+            triggers.master_enabled, triggers.eval_current_position,
+            triggers.suggest_moves, triggers.eval_history_moves,
+            triggers.game_over_summary, self.controller.modes.mode.value,
+        )
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
             triggers=triggers,
@@ -787,30 +850,62 @@ class MainWindow(QMainWindow):
             game_mode_name=self.controller.modes.mode.value,
         )
         self.chat_panel.append_user_message("*(点击了「主动询问女仆指导」)*")
-        self._dispatch_llm_request(custom_prompt)
+        self._dispatch_llm_request(
+            custom_prompt,
+            memory_label="[主动询问] 全局局势指导",
+            cache_key=cache_key,
+        )
 
     def on_user_chat_message(self, message: str):
-        """手动输入框发送消息"""
-        self._dispatch_llm_request(message)
+        """手动输入框发送消息 (用户自由输入, 走 untrusted 防注入包裹)"""
+        self._dispatch_llm_request(message, trusted=False)
 
-    def _dispatch_llm_request(self, message: str):
-        """异步调度 LLM 请求，展示 Loading 旋转控件与逐字打字机流式渲染"""
+    def _dispatch_llm_request(
+        self,
+        message: str,
+        memory_label: Optional[str] = None,
+        cache_key: Optional[str] = None,
+        trusted: bool = True,
+    ):
+        """异步调度 LLM 请求，展示 Loading 旋转控件与逐字打字机流式渲染
+
+        Token 工程化:
+          - 语义缓存命中: 直接复用回复, 零网络请求
+          - 短期记忆只写入意图标签 (memory_label) 而非含完整 PGN 的提示词
+          - trusted=False 时用户原文以 <untrusted_user_input> 包裹发送, 防 Prompt 注入
+        """
         # 取消上一个在途的 LLM 线程
         if self._llm_thread is not None and self._llm_thread.isRunning():
             self._llm_thread.cancel()
 
         self._llm_generation += 1
         generation = self._llm_generation
+        self._pending_cache_key = None
 
+        fen = self.controller.get_fen()
+        label = memory_label or message
+
+        # 语义缓存命中: 记忆落账 + 直接展示
+        if cache_key:
+            cached = self._semantic_cache.get(cache_key)
+            if cached:
+                logger.debug("语义缓存命中: %s", cache_key[:12])
+                self.short_memory.add_turn(role="user", content=label, fen=fen)
+                self.short_memory.add_turn(role="assistant", content=cached, fen=fen)
+                self.chat_panel.append_maid_message(cached)
+                return
+
+        self._pending_cache_key = cache_key
         self.chat_panel.set_loading(True)
-        # 记录用户提问到短期工作记忆
-        self.short_memory.add_turn(role="user", content=message, fen=self.controller.get_fen())
+        # 记录用户意图标签 (而非完整 Prompt) 到短期工作记忆, 避免历史上下文 PGN 膨胀
+        self.short_memory.add_turn(role="user", content=label, fen=fen)
 
         request = self.controller.build_agent_request(
             message,
             persona_prompt=self.current_persona,
             dialog_history=self.short_memory.get_messages()[:-1]  # 传入历史上下文
         )
+        request.trust_user_message = trusted
 
         self._llm_thread = LLMWorker(self.agent, request, generation=generation, parent=self)
         self._llm_thread.chunk_ready.connect(self._on_llm_chunk)
@@ -828,12 +923,19 @@ class MainWindow(QMainWindow):
             return  # 过期回复, 丢弃
         self.chat_panel.set_loading(False)
         self.chat_panel.finalize_maid_stream(reply)
-        # 记录女仆回复到短期记忆
+        # 记录女仆回复到短期记忆; 命中语义缓存键的确定性回复写入缓存
         if reply:
             self.short_memory.add_turn(role="assistant", content=reply, fen=self.controller.get_fen())
+            if self._pending_cache_key:
+                self._semantic_cache.put(self._pending_cache_key, reply)
+        self._pending_cache_key = None
+        # 用量可观测性: 输出累计 Token/调用统计
+        if isinstance(self.agent, LLMAgent):
+            logger.info("LLM 用量统计: %s", self.agent.get_usage_stats())
 
     def _on_llm_failed(self, error_msg: str, generation: int):
         if generation != self._llm_generation:
             return
         self.chat_panel.set_loading(False)
+        self._pending_cache_key = None  # 失败回复不入缓存
         self.chat_panel.finalize_maid_stream(f"*(女仆回复出现异常: {error_msg})*")

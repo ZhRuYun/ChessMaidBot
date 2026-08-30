@@ -141,6 +141,7 @@ class ChatPanel(QWidget):
         layout.addLayout(action_layout)
 
         self._message_history: list[tuple[str, str]] = []  # (role, text/markdown)
+        self._cached_blocks: list[str] = []  # 已完成消息的 HTML 块缓存 (流式期间免全量重绘)
 
         # 初始欢迎信息
         self.append_maid_message(
@@ -183,63 +184,80 @@ class ChatPanel(QWidget):
         else:
             self.set_llm_connected(False)
 
-    def _render_all_messages(self):
-        """根据当前主题重新渲染全部对话历史"""
-        self.chat_display.clear()
+    def _theme_vars(self) -> dict:
+        """当前主题下的气泡配色变量"""
         is_light = getattr(self, "_is_light_theme", False)
-        bg = "#f1f5f9" if is_light else "#1e293b"
-        text_col = "#0f172a" if is_light else "#e2e8f0"
-        border = "#cbd5e1" if is_light else "#334155"
-        user_bg = "#0284c7" if is_light else "#1e3a8a"
-        user_text = "#ffffff"
+        return {
+            "bg": "#f1f5f9" if is_light else "#1e293b",
+            "text_col": "#0f172a" if is_light else "#e2e8f0",
+            "border": "#cbd5e1" if is_light else "#334155",
+            "user_bg": "#0284c7" if is_light else "#1e3a8a",
+            "user_text": "#ffffff",
+        }
 
-        html_blocks = []
-        for role, msg in self._message_history:
-            if role == "user":
-                html = f"""
-                <div style='margin-bottom: 12px; text-align: right;'>
-                    <div style='display: inline-block; max-width: 85%; background-color: {user_bg};
-                                color: {user_text}; padding: 8px 12px; border-radius: 12px 12px 2px 12px;
-                                text-align: left; font-size: 13px; line-height: 1.5;'>
-                        <b style='color: #e2e8f0; font-size: 11px;'>您:</b><br>{msg}
-                    </div>
-                </div>
-                """
-            else:
-                is_streaming = (role == "maid_stream")
-                md_html = markdown.markdown(
-                    msg,
-                    extensions=['fenced_code', 'tables']
-                )
-                stream_cursor = " <span style='color: #38bdf8;'>▋</span>" if is_streaming else ""
-                html = f"""
-                <div style='margin-bottom: 12px; text-align: left;'>
-                    <div style='display: inline-block; max-width: 90%; background-color: {bg};
-                                color: {text_col}; border: 1px solid {border}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
-                                font-size: 13px; line-height: 1.6;'>
-                        <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}{stream_cursor}
-                    </div>
-                </div>
-                """
-            html_blocks.append(html)
+    def _build_user_bubble(self, msg: str, tv: dict) -> str:
+        return f"""
+        <div style='margin-bottom: 12px; text-align: right;'>
+            <div style='display: inline-block; max-width: 85%; background-color: {tv["user_bg"]};
+                        color: {tv["user_text"]}; padding: 8px 12px; border-radius: 12px 12px 2px 12px;
+                        text-align: left; font-size: 13px; line-height: 1.5;'>
+                <b style='color: #e2e8f0; font-size: 11px;'>您:</b><br>{msg}
+            </div>
+        </div>
+        """
 
-        self.chat_display.setHtml("".join(html_blocks))
+    def _build_maid_bubble(self, msg: str, tv: dict, is_streaming: bool = False) -> str:
+        md_html = markdown.markdown(msg, extensions=['fenced_code', 'tables'])
+        stream_cursor = " <span style='color: #38bdf8;'>▋</span>" if is_streaming else ""
+        return f"""
+        <div style='margin-bottom: 12px; text-align: left;'>
+            <div style='display: inline-block; max-width: 90%; background-color: {tv["bg"]};
+                        color: {tv["text_col"]}; border: 1px solid {tv["border"]}; padding: 10px 14px; border-radius: 12px 12px 12px 2px;
+                        font-size: 13px; line-height: 1.6;'>
+                <span style='color: #0284c7; font-weight: 700; font-size: 11px;'>ChessMaid:</span><br>{md_html}{stream_cursor}
+            </div>
+        </div>
+        """
+
+    def _apply_html(self, html: str):
+        """写入聊天区并滚动到底部"""
+        self.chat_display.setHtml(html)
         sb = self.chat_display.verticalScrollBar()
         if sb:
             sb.setValue(sb.maximum())
+
+    def _render_all_messages(self):
+        """根据当前主题重新渲染全部对话历史 (并刷新完成块缓存)"""
+        tv = self._theme_vars()
+        blocks = []
+        for role, msg in self._message_history:
+            if role == "maid_stream":
+                continue  # 流式块由快速路径单独渲染
+            if role == "user":
+                blocks.append(self._build_user_bubble(msg, tv))
+            else:
+                blocks.append(self._build_maid_bubble(msg, tv, is_streaming=False))
+        self._cached_blocks = blocks
+        html = "".join(blocks)
+        if self._message_history and self._message_history[-1][0] == "maid_stream":
+            html += self._build_maid_bubble(self._message_history[-1][1], tv, is_streaming=True)
+        self._apply_html(html)
 
     def append_user_message(self, text: str):
         self._message_history.append(("user", text))
         self._render_all_messages()
 
     def append_maid_chunk(self, chunk: str):
-        """流式追加女仆消息片段"""
+        """流式追加女仆消息片段 (增量路径: 仅重绘当前流式气泡, 不重绘历史块)"""
         if not self._message_history or self._message_history[-1][0] != "maid_stream":
             self._message_history.append(("maid_stream", chunk))
         else:
             prev = self._message_history[-1][1]
             self._message_history[-1] = ("maid_stream", prev + chunk)
-        self._render_all_messages()
+        tv = self._theme_vars()
+        streaming_text = self._message_history[-1][1]
+        html = "".join(self._cached_blocks) + self._build_maid_bubble(streaming_text, tv, is_streaming=True)
+        self._apply_html(html)
 
     def finalize_maid_stream(self, final_text: str):
         """结束流式输出，转为正式 maid 消息"""

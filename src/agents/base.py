@@ -48,6 +48,10 @@ class AgentRequest:
     dialog_history: List[dict] = field(default_factory=list)
     tools: Optional[AgentTools] = None
     game_mode: Optional[str] = None
+    # False 表示 user_message 为用户自由输入原文, 发送时需包裹 <untrusted_user_input> 防注入标记
+    trust_user_message: bool = True
+    # True 时启用两段式流水线: 教练结构化分析 -> 女仆人格化改写
+    two_stage: bool = False
 
 
 class ChessAgent(ABC):
