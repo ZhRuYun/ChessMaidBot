@@ -71,7 +71,10 @@ class TestGuiSmoke(unittest.TestCase):
         self.window.chess_board.execute_user_move(chess.E2, chess.E4)
         APP.processEvents()
         self.assertIsNone(self.window._llm_thread)
-        self.assertNotIn("玩家落子自动教学触发", self.window.chat_panel.chat_display.toPlainText())
+        chat_text = self.window.chat_panel.chat_display.toPlainText()
+        self.assertNotIn("玩家落子自动教学触发", chat_text)
+        self.assertNotIn("分析解答要点", chat_text)
+        self.assertNotIn("输出要求", chat_text)
 
     def test_chat_message_flow(self):
         self.window.chat_panel.send_message("请评估局面")

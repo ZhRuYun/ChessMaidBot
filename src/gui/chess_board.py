@@ -20,6 +20,8 @@ from .promotion_dialog import PromotionDialog
 
 class ChessBoardWidget(QWidget):
     move_ready = Signal(object)  # chess.Move, 由调度层应用
+    MIN_SQUARE_SIZE = 48
+    MAX_SQUARE_SIZE = 82
 
     def __init__(self, board_state: BoardState, parent=None):
         super().__init__(parent)
@@ -40,9 +42,22 @@ class ChessBoardWidget(QWidget):
         self.piece_pixmaps: Dict[str, QPixmap] = {}
         self.load_piece_pixmaps()
 
-        # 固定棋盘像素大小
-        self.setFixedSize(self.square_size * 8, self.square_size * 8)
+        self.set_board_pixel_size(self.square_size * 8)
         self.setMouseTracking(True)
+
+    def set_board_pixel_size(self, available_size: int):
+        """按完整格子缩放棋盘，并严格限制可用的最小与最大边长。"""
+        square_size = max(
+            self.MIN_SQUARE_SIZE,
+            min(self.MAX_SQUARE_SIZE, int(available_size) // 8),
+        )
+        if square_size == self.square_size and self.width() == square_size * 8:
+            return
+        self.square_size = square_size
+        board_size = square_size * 8
+        self.setFixedSize(board_size, board_size)
+        self.load_piece_pixmaps()
+        self.update()
 
     def set_preview_board(self, board: Optional[chess.Board], last_move: Optional[chess.Move] = None):
         """设置预览棋盘（用于回看历史局面）"""
