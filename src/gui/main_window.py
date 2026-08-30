@@ -38,45 +38,28 @@ logger = logging.getLogger("chessmaid.gui")
 
 
 class LLMWorker(QThread):
-    """异步执行 LLM 请求的后台线程，支持流式逐字输出与取消控制"""
-    chunk_ready = Signal(str, int)     # (流式片段文本, 代际号)
-    response_ready = Signal(str, int)  # (完整回复文本, 代际号)
-    failed = Signal(str, int)          # (错误信息, 代际号)
+    """异步执行 LLM 请求的后台线程，支持流式逐字输出"""
+    chunk_ready = Signal(str)     # 流式片段文本
+    response_ready = Signal(str)  # 完整回复文本
+    failed = Signal(str)          # 错误信息
 
-    def __init__(self, agent: ChessAgent, request: AgentRequest, generation: int = 0, parent=None):
+    def __init__(self, agent: ChessAgent, request: AgentRequest, parent=None):
         super().__init__(parent)
         self.agent = agent
         self.request = request
-        self.generation = generation
-        self._is_cancelled = False
         # 线程结束自动回收 C++ / Python 资源，防止长时间对局产生对象累积泄漏
         self.finished.connect(self.deleteLater)
-
-    def cancel(self):
-        self._is_cancelled = True
 
     def run(self):
         try:
             def _on_chunk(chunk: str):
-                if not self._is_cancelled:
-                    self.chunk_ready.emit(chunk, self.generation)
+                self.chunk_ready.emit(chunk)
 
-            def _check_cancelled() -> bool:
-                return self._is_cancelled
-
-            # 依据实际签名决定是否传递取消回调 (稳健于接口差异)
-            params = inspect.signature(self.agent.reply).parameters
-            if "is_cancelled" in params:
-                reply = self.agent.reply(self.request, on_chunk=_on_chunk, is_cancelled=_check_cancelled)
-            else:
-                reply = self.agent.reply(self.request, on_chunk=_on_chunk)
-
-            if not self._is_cancelled:
-                self.response_ready.emit(reply, self.generation)
+            reply = self.agent.reply(self.request, on_chunk=_on_chunk)
+            self.response_ready.emit(reply)
         except Exception as e:
             logger.error("LLMWorker 执行失败: %s", e, exc_info=True)
-            if not self._is_cancelled:
-                self.failed.emit(str(e), self.generation)
+            self.failed.emit(str(e))
 
 
 class MainWindow(QMainWindow):
@@ -150,7 +133,6 @@ class MainWindow(QMainWindow):
 
         self.controller.set_agent(self.agent)
         self._llm_thread: Optional[LLMWorker] = None
-        self._llm_generation = 0  # LLM 请求代际号: 新请求发出后, 旧线程的过期回复按代际丢弃
         self._online_server: Optional[EmbeddedOnlineServer] = None
         self._online_client: Optional[OnlineMatchClient] = None
 
@@ -392,15 +374,20 @@ class MainWindow(QMainWindow):
             return
 
         # 判定刚走这一步棋的是玩家还是引擎/对手
+        is_player_move = True
         mover_desc = "棋手"
         if self.controller.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
             player_is_white = (self.controller.modes.player_side == "white")
-            mover_desc = "你的主人（玩家）" if was_white == player_is_white else "对手（引擎/AI）"
+            is_player_move = (was_white == player_is_white)
+            mover_desc = "你的主人（玩家）" if is_player_move else "对手（引擎/AI）"
         elif self.controller.modes.mode == GameMode.ONLINE_PVP:
             is_my_move = (was_white and self._online_client and self._online_client.my_side == "white") or (not was_white and self._online_client and self._online_client.my_side == "black")
+            is_player_move = bool(is_my_move)
             mover_desc = "你的主人（玩家）" if is_my_move else "对手（网络玩家）"
 
-        # 构建内部教学 prompt，局面每走一步棋即回应一步
+        # 在人机/网络对战中，当玩家落子后引擎立即走子，若每半步都触发会导致请求并发打架；
+        # 因此在人机/女仆模式下，仅在轮到玩家行动或玩家落子后且引擎响应完成后给予全面教学分析。
+        # 构建内部教学 prompt
         snapshot = self.controller.get_snapshot()
         model_name = getattr(self.agent, "model", "")
         cache_key = SemanticCache.make_key(
@@ -933,20 +920,16 @@ class MainWindow(QMainWindow):
         )
         request.trust_user_message = trusted
 
-        self._llm_thread = LLMWorker(self.agent, request, generation=generation, parent=self)
+        self._llm_thread = LLMWorker(self.agent, request, parent=self)
         self._llm_thread.chunk_ready.connect(self._on_llm_chunk)
         self._llm_thread.response_ready.connect(self._on_llm_response)
         self._llm_thread.failed.connect(self._on_llm_failed)
         self._llm_thread.start()
 
-    def _on_llm_chunk(self, chunk: str, generation: int):
-        if generation != self._llm_generation:
-            return
+    def _on_llm_chunk(self, chunk: str):
         self.chat_panel.append_maid_chunk(chunk)
 
-    def _on_llm_response(self, reply: str, generation: int):
-        if generation != self._llm_generation:
-            return  # 过期回复, 丢弃
+    def _on_llm_response(self, reply: str):
         self.chat_panel.set_loading(False)
         self.chat_panel.finalize_maid_stream(reply)
         # 记录女仆回复到短期记忆; 命中语义缓存键的确定性回复写入缓存
@@ -959,9 +942,7 @@ class MainWindow(QMainWindow):
         if isinstance(self.agent, LLMAgent):
             logger.info("LLM 用量统计: %s", self.agent.get_usage_stats())
 
-    def _on_llm_failed(self, error_msg: str, generation: int):
-        if generation != self._llm_generation:
-            return
+    def _on_llm_failed(self, error_msg: str):
         self.chat_panel.set_loading(False)
         self._pending_cache_key = None  # 失败回复不入缓存
         self.chat_panel.finalize_maid_stream(f"*(女仆回复出现异常: {error_msg})*")
