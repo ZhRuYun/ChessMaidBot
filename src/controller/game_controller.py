@@ -15,6 +15,7 @@
 import json
 import logging
 import threading
+import time
 import urllib.parse
 import urllib.request
 from typing import Optional, Dict, Any, Callable, List
@@ -65,6 +66,8 @@ class EngineWorker(QThread):
         self.agent_request = agent_request
         self.agent = agent
         self.cancel_event = cancel_event
+        # 线程结束自动回收 C++ / Python 资源，杜绝对象在长会话中累积泄漏
+        self.finished.connect(self.deleteLater)
 
     def _best_move_via_engine(self) -> Optional[str]:
         """通过共享引擎进程计算最佳着法 (线程安全串行)"""
@@ -709,6 +712,8 @@ class GameController(QObject):
                         "delta_cp": round(delta, 1),
                         "eval_white": round(current_eval_white, 1)
                     })
+                    # 释放 CPU 与引擎锁片刻，避免霸占引擎互斥锁导致前台走棋排队阻塞
+                    time.sleep(0.005)
                 except Exception:
                     pass
 
@@ -751,6 +756,8 @@ class GameController(QObject):
                         "delta_cp": round(delta, 1),
                         "eval_white": round(current_eval_white, 1)
                     })
+                    # 释放 CPU 与引擎锁片刻，避免霸占引擎互斥锁导致前台走棋排队阻塞
+                    time.sleep(0.005)
                 except Exception:
                     pass
 

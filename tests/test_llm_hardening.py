@@ -16,7 +16,8 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from src.agents import prompt_registry
 from src.agents.base import AgentRequest, AgentTools, PositionSnapshot
-from src.agents.llm_agent import LLMAgent
+from src.agents.llm_agent import LLMAgent, ResilientStreamParser, _safe_int_env
+from src.agents.memory import LongTermMemory, PlayerProfile
 from src.agents.semantic_cache import SemanticCache
 from src.config import DEFAULT_MAID_PERSONA
 
@@ -151,6 +152,47 @@ class TestLLMAgentHardening(unittest.TestCase):
         move = agent.get_move(req)
         self.assertEqual(move, "g8f6")
         self.assertEqual(agent.last_move_source, "engine")  # 来源披露
+
+    def test_stream_parser_utf8_split_boundary(self):
+        """测试多字节中文字符跨 256 字节 boundary 被切断时不会产生乱码 U+FFFD"""
+        chunks_emitted = []
+        parser = ResilientStreamParser(on_chunk=lambda c: chunks_emitted.append(c))
+
+        # 构建一段包含中文的 SSE 数据
+        text_chinese = "你好，主人！这是一条包含大量中文字符的国际象棋教学指导。"
+        data_json = json.dumps({"choices": [{"delta": {"content": text_chinese}}]})
+        sse_bytes = f"data: {data_json}\n\n".encode("utf-8")
+
+        # 模拟在中文 3-byte 序列中间（例如索引 15）切成两半
+        split_idx = sse_bytes.find("你好".encode("utf-8")) + 2  # 切在 "你" 的第2和第3字节之间
+        part1 = sse_bytes[:split_idx]
+        part2 = sse_bytes[split_idx:]
+
+        parser.feed(part1)
+        parser.feed(part2)
+
+        res = parser.get_result()
+        self.assertNotIn("\ufffd", res)
+        self.assertEqual(res, text_chinese)
+
+    def test_safe_int_env(self):
+        os.environ["TEST_VALID_INT"] = "2048"
+        os.environ["TEST_INVALID_INT"] = "2k"
+        self.assertEqual(_safe_int_env("TEST_VALID_INT", 1024), 2048)
+        self.assertEqual(_safe_int_env("TEST_INVALID_INT", 1024), 1024)
+        self.assertEqual(_safe_int_env("TEST_NONEXISTENT", 512), 512)
+
+    def test_memory_distillation(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "profile.json"
+            ltm = LongTermMemory(profile_path=path)
+            ltm.record_distilled_insight(
+                weakness="第 14 步漏算象吃马",
+                advice="计算战术前注意防守牵制"
+            )
+            summary = ltm.get_summary_prompt()
+            self.assertIn("第 14 步漏算象吃马", summary)
+            self.assertIn("计算战术前注意防守牵制", summary)
 
     def test_get_move_no_random_without_engine(self):
         agent = self._agent(api_key="")

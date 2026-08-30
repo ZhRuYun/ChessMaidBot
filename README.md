@@ -168,15 +168,19 @@ ChessMaidBot/
 ## 六、AI 女仆与 LLM 核心机制
 
 1. **结构化输出与走法决策 (`LLMAgent.get_move`)**：
-   - 彻底告别脆弱的正则表达式。在女仆对弈模式下，通过向 LLM 注入合法 UCI 着法白名单并强制要求返回严格的 JSON 对象（`{"thought": "...", "best_move_uci": "e2e4"}`），解析异常时自动通过 Stockfish 引擎或开局库平滑降级。
+   - 彻底告别脆弱的正则表达式。在女仆对弈模式下，通过向 LLM 注入合法 UCI 着法白名单并强制要求返回严格的 JSON Schema / Object（`{"thought": "...", "best_move_uci": "e2e4"}`），支持非法着法带反馈自纠错重试，解析异常时自动通过 Stockfish 引擎或开局库平滑降级。
 2. **多轮对话上下文管理 (`ShortTermMemory`)**：
    - 调度层自动追踪对话事件流，向 LLM 动态注入最近 10 轮历史对话，支持基于上下文的连续追问与棋理探讨。
-3. **长期画像积累 (`LongTermMemory`)**：
-   - 跨对局自动归档胜负数据、偏好开局与高频失误，自动为玩家打上棋风标签（如“沉稳战术型”），并在对弈中提供个性化指导。
+3. **长期画像积累与 LLM 战术蒸馏 (`LongTermMemory`)**：
+   - 跨对局自动归档胜负数据、偏好开局与高频失误，自动为玩家打上棋风标签（如“沉稳战术型”），并在终局复盘中自动蒸馏关键弱点与教练重点建议，在后续对弈中提供高度个性化指导。
 4. **自主 Tool Calling 与去冗余调用**：
-   - 移除 System Prompt 中的硬编码前置数据抓取，支持模型在推理过程中按需调用 `engine_analyze`、`query_opening_book`、`query_game_history`、`search_chess_knowledge` 与 `request_undo`。
+   - 移除 System Prompt 中的硬编码前置数据抓取，支持模型在推理过程中按需调用 `engine_analyze`、`query_opening_book`、`query_game_history`、`search_chess_knowledge` 与 `request_undo`（带单局去重限流）。
 5. **弹性流式传输与自愈机制 (`ResilientStreamParser`)**：
-   - 支持 SSE 逐字流式打字机渲染；支持请求在途主动取消；具备 Markdown 未闭合代码块自动修复能力。
+   - 内置 UTF-8 增量解码器，彻底杜绝字节流截断导致的中文乱码（U+FFFD）；支持 SSE 逐字流式打字机渲染与请求在途主动取消；具备 Markdown 未闭合代码块自动修复能力。
+6. **落子自动教学单向门控**：
+   - 仅针对人类玩家自身走棋触发自动教学，避免 AI 自身落子重复请求导致 Token 翻倍与请求相互中断，大幅降低使用成本并提升交互稳定性。
+7. **异步非阻塞运维与安全存储**：
+   - 连接测试与远端模型拉取通过 `FetchModelsWorker` 异步执行，杜绝 UI 冻结；配置凭据通过 600 权限用户私有化保护，用量统计与引擎互斥全链路线程安全。
 
 ---
 

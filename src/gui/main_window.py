@@ -49,6 +49,8 @@ class LLMWorker(QThread):
         self.request = request
         self.generation = generation
         self._is_cancelled = False
+        # 线程结束自动回收 C++ / Python 资源，防止长时间对局产生对象累积泄漏
+        self.finished.connect(self.deleteLater)
 
     def cancel(self):
         self._is_cancelled = True
@@ -310,8 +312,14 @@ class MainWindow(QMainWindow):
                 opening=opening_name,
                 blunders=[f"{b['move']}({b['quality']})" for b in blunders[:5]],
             )
+            if blunders:
+                worst_blunder = min(blunders, key=lambda x: x.get("delta_cp", 0))
+                self.long_memory.record_distilled_insight(
+                    weakness=f"第 {worst_blunder['ply']} 半回合漏着 {worst_blunder['move']} (损失 {worst_blunder['delta_cp']}cp)",
+                    advice="在中后局行棋前需重点复核潜在战术战机与王翼安全防护"
+                )
         except Exception as e:
-            logger.warning("长期画像回填失败: %s", e)
+            logger.warning("长期画像回填与蒸馏失败: %s", e)
 
         blunder_summary = ""
         if blunders:
@@ -385,14 +393,25 @@ class MainWindow(QMainWindow):
         if not triggers.master_enabled or not self._has_configured_llm_api():
             return
 
+        # 仅对人类玩家自身的走棋触发自动教学，避免 AI 自身落子重复触发导致 Token 翻倍且掐断玩家教学回复
+        if self.controller.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
+            player_is_white = (self.controller.modes.player_side == "white")
+            if was_white != player_is_white:
+                return
+        elif self.controller.modes.mode == GameMode.ONLINE_PVP:
+            if not is_my_move:
+                return
+
         # 构建内部教学 prompt。它只发送给模型，不写入聊天展示区。
-        # 语义缓存键 = 局面 + 教学开关 + 模式 (确定性请求可复用回复)
+        # 语义缓存键 = 局面 + 教学开关 + 模式 + 当前人设 + 模型 (确定性请求可复用回复)
         snapshot = self.controller.get_snapshot()
+        model_name = getattr(self.agent, "model", "")
         cache_key = SemanticCache.make_key(
             "auto_teach", snapshot.fen,
             triggers.master_enabled, triggers.eval_current_position,
             triggers.suggest_moves, triggers.eval_history_moves,
             triggers.game_over_summary, self.controller.modes.mode.value,
+            self.current_persona, model_name,
         )
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,
@@ -784,6 +803,11 @@ class MainWindow(QMainWindow):
             CONFIG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            try:
+                # 严格限制凭据配置文件仅当前用户可读写 (600 权限)，保障本地存储安全
+                os.chmod(CONFIG_FILE_PATH, 0o600)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -837,11 +861,13 @@ class MainWindow(QMainWindow):
         """
         triggers = self.controller.teaching
         snapshot = self.controller.get_snapshot()
+        model_name = getattr(self.agent, "model", "")
         cache_key = SemanticCache.make_key(
             "ask_llm", snapshot.fen,
             triggers.master_enabled, triggers.eval_current_position,
             triggers.suggest_moves, triggers.eval_history_moves,
             triggers.game_over_summary, self.controller.modes.mode.value,
+            self.current_persona, model_name,
         )
         custom_prompt = PromptBuilder.build_custom_prompt(
             snapshot=snapshot,

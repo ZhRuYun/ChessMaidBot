@@ -9,10 +9,12 @@
   - 分层 Prompt 防御 (System 护栏 + untrusted 标记 + 工具结果沙箱)
   - 多轮对话记忆接入、两段式 (教练->女仆) 流水线、Token 用量统计
 """
+import codecs
 import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -29,6 +31,18 @@ logger = logging.getLogger("chessmaid.llm")
 _VALID_REASONING_EFFORTS = {"minimal", "low", "medium", "high"}
 
 
+def _safe_int_env(key: str, default: int) -> int:
+    """安全解析整型环境变量，遇非法格式回退默认值"""
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except (ValueError, TypeError):
+        logger.warning("环境变量 %s=%r 格式非法，使用默认值 %d", key, raw, default)
+        return default
+
+
 class LLMTransportError(RuntimeError):
     """LLM HTTP 传输错误 (带状态码 / 是否可重试 / 退避时间)"""
 
@@ -41,20 +55,23 @@ class LLMTransportError(RuntimeError):
 
 
 class ResilientStreamParser:
-    """双缓冲与自愈式 SSE 流式解析器，支持中断检查与 Markdown 代码块闭合检测"""
+    """双缓冲与自愈式 SSE 流式解析器，支持多字节增量解码、中断检查与 Markdown 代码块闭合检测"""
 
     def __init__(self, on_chunk: Optional[Callable[[str], None]] = None, is_cancelled: Optional[Callable[[], bool]] = None):
         self.on_chunk = on_chunk
         self.is_cancelled = is_cancelled
         self.buffer = ""
         self.full_content: List[str] = []
+        # 使用 UTF-8 增量解码器，彻底避免 256 字节分片切断多字节中文导致 U+FFFD 乱码
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def feed(self, raw_bytes: bytes) -> bool:
         """喂入字节流，返回是否应继续处理 (False 表示被取消或流结束)"""
         if self.is_cancelled and self.is_cancelled():
             return False
 
-        self.buffer += raw_bytes.decode("utf-8", errors="replace")
+        decoded_text = self._decoder.decode(raw_bytes, final=False)
+        self.buffer += decoded_text
         lines = self.buffer.split("\n")
         self.buffer = lines.pop()  # 保留未完成的行
 
@@ -81,6 +98,22 @@ class ResilientStreamParser:
         return True
 
     def get_result(self) -> str:
+        # 处理可能残留在 buffer 或解码器中的文本
+        trailing = self._decoder.decode(b"", final=True)
+        if trailing:
+            self.buffer += trailing
+        if self.buffer.startswith("data:"):
+            raw_data = self.buffer[len("data:"):].strip()
+            if raw_data and raw_data != "[DONE]":
+                try:
+                    data_obj = json.loads(raw_data)
+                    choices = data_obj.get("choices", [])
+                    if choices:
+                        part = choices[0].get("delta", {}).get("content", "")
+                        if part:
+                            self.full_content.append(part)
+                except Exception:
+                    pass
         res = "".join(self.full_content).strip()
         # 自愈：检测未闭合的 markdown 代码块
         code_fence_count = res.count("```")
@@ -114,7 +147,7 @@ class LLMAgent(ChessAgent):
         self.api_key = api_key or os.environ.get("LLM_API_KEY", "")
         self.model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
         self.timeout = timeout
-        self.max_tokens = int(os.environ.get("LLM_MAX_TOKENS", str(max_tokens)))
+        self.max_tokens = _safe_int_env("LLM_MAX_TOKENS", max_tokens)
 
         env_reasoning = os.environ.get("LLM_REASONING_EFFORT", "auto")
         self.reasoning_effort = (reasoning_effort if reasoning_effort is not None else env_reasoning).strip().lower()
@@ -127,6 +160,10 @@ class LLMAgent(ChessAgent):
         self.persona_prompt = persona_prompt or prompt_registry.render("persona_default")
         # 最近一次 get_move 的着法来源: "llm" / "engine" / None
         self.last_move_source: Optional[str] = None
+        # 劣势悔棋请求去重记录集合
+        self._undo_requested_fens: set[str] = set()
+        # 线程安全锁
+        self._lock = threading.Lock()
         # Token 用量与调用统计 (可观测性)
         self.usage_stats: Dict[str, int] = {
             "calls": 0, "errors": 0, "stream_calls": 0,
@@ -139,7 +176,8 @@ class LLMAgent(ChessAgent):
 
     def get_usage_stats(self) -> Dict[str, int]:
         """返回累计用量统计 (副本)"""
-        return dict(self.usage_stats)
+        with self._lock:
+            return dict(self.usage_stats)
 
     # ---------- 工具调用定义 (Function Calling) ----------
 
@@ -321,10 +359,14 @@ class LLMAgent(ChessAgent):
                         "content": tool_out
                     })
 
-            res = self._call_chat_api(messages, on_chunk=on_chunk, is_cancelled=is_cancelled).strip()
+            if tool_defs:
+                res = self._call_chat_api(messages, on_chunk=on_chunk, is_cancelled=is_cancelled, tools=tool_defs, tool_choice="none").strip()
+            else:
+                res = self._call_chat_api(messages, on_chunk=on_chunk, is_cancelled=is_cancelled).strip()
         except Exception as e:
             logger.warning("LLM reply 失败，使用本地回退: %s", e, exc_info=True)
-            self.usage_stats["errors"] += 1
+            with self._lock:
+                self.usage_stats["errors"] += 1
             res = self._fallback_reply(request)
             if on_chunk:
                 on_chunk(res)
@@ -440,21 +482,24 @@ class LLMAgent(ChessAgent):
         """通过结构化 JSON 输出获取下一步走法; 失败时降级 Stockfish 并披露来源"""
         self.last_move_source = None
 
-        # 劣势向玩家申请悔棋判定 (低成本快速分析)
+        fen = request.snapshot.fen
+
+        # 劣势向玩家申请悔棋判定 (低成本快速分析，单局单局面防频繁刷屏)
         if request.tools and getattr(request.tools, "read_engine_state", None) and getattr(request.tools, "request_undo", None):
             try:
-                state = request.tools.read_engine_state("analyse", {"depth": 6, "multipv": 1})
-                if state and state.get("available") and state.get("analysis"):
-                    cp = state["analysis"][0].get("score_cp")
-                    if cp is not None and cp < -350:
-                        request.tools.request_undo("女仆感觉当前局势落后过大陷入危机，向主人请求悔棋一步！")
+                if fen not in self._undo_requested_fens and len(self._undo_requested_fens) < 2:
+                    state = request.tools.read_engine_state("analyse", {"depth": 6, "multipv": 1})
+                    if state and state.get("available") and state.get("analysis"):
+                        cp = state["analysis"][0].get("score_cp")
+                        if cp is not None and cp < -350:
+                            self._undo_requested_fens.add(fen)
+                            request.tools.request_undo("女仆感觉当前局势落后过大陷入危机，向主人请求悔棋一步！")
             except Exception as e:
                 logger.debug("悔棋判定分析失败: %s", e)
 
         if is_cancelled and is_cancelled():
             return None
 
-        fen = request.snapshot.fen
         board = chess.Board(fen)
         legal_uci_list = [m.uci() for m in board.legal_moves]
         if not legal_uci_list:
@@ -489,7 +534,7 @@ class LLMAgent(ChessAgent):
         legal_uci_list: list[str],
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Optional[str]:
-        """JSON 结构化走法决策; 输出非法着法时附带纠错反馈重试一次"""
+        """JSON 结构化走法决策; 支持 Strict json_schema 与 json_object 自纠错"""
         schema_text = '{"thought": "简短战术理由", "best_move_uci": "选定的合法UCI"}'
         prompt = prompt_registry.render(
             "move_decision",
@@ -502,15 +547,42 @@ class LLMAgent(ChessAgent):
             {"role": "user", "content": prompt}
         ]
 
-        def _attempt(msgs: list[dict]) -> tuple[Optional[str], str]:
-            payload = {
+        def _attempt(msgs: list[dict], use_strict_schema: bool = True) -> tuple[Optional[str], str]:
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "messages": msgs,
                 "temperature": 0.2,
                 "max_tokens": 150,
-                "response_format": {"type": "json_object"}
             }
-            res = self._post_json_payload(payload)
+            if use_strict_schema and "deepseek" not in self.api_base.lower():
+                # OpenAI/兼容模型 Strict Structured Outputs
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "chess_move_decision",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "thought": {"type": "string", "description": "简短战术理由"},
+                                "best_move_uci": {"type": "string", "enum": legal_uci_list, "description": "选定的合法UCI着法"}
+                            },
+                            "required": ["thought", "best_move_uci"],
+                            "additionalProperties": False
+                        }
+                    }
+                }
+            else:
+                payload["response_format"] = {"type": "json_object"}
+
+            try:
+                res = self._post_json_payload(payload)
+            except Exception:
+                if use_strict_schema:
+                    # json_schema 不被端点支持时降级到 json_object
+                    return _attempt(msgs, use_strict_schema=False)
+                raise
+
             self._record_usage(res)
             choices = res.get("choices", [])
             content = choices[0].get("message", {}).get("content", "") if choices else ""
@@ -540,7 +612,7 @@ class LLMAgent(ChessAgent):
                     "重新仅输出 JSON 对象。"
                 )
             })
-            move_uci, _ = _attempt(messages)
+            move_uci, _ = _attempt(messages, use_strict_schema=False)
             if move_uci:
                 return move_uci
             logger.warning("结构化走法纠错后仍非法，交由引擎兜底")
@@ -553,8 +625,9 @@ class LLMAgent(ChessAgent):
     def _record_usage(self, result: dict):
         """累计 API usage 字段 (若返回)"""
         usage = result.get("usage") or {}
-        self.usage_stats["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
-        self.usage_stats["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+        with self._lock:
+            self.usage_stats["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+            self.usage_stats["completion_tokens"] += int(usage.get("completion_tokens") or 0)
 
     def _reasoning_payload(self) -> dict:
         """清洗 reasoning_effort: 非法值剔除; DeepSeek 官方 API 不支持该参数则不下发"""
@@ -616,13 +689,15 @@ class LLMAgent(ChessAgent):
             if remaining <= 0:
                 raise LLMTransportError("总超时预算耗尽", retryable=False)
             timeout = max(1, min(self.timeout, remaining))
-        self.usage_stats["calls"] += 1
+        with self._lock:
+            self.usage_stats["calls"] += 1
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8")
         except Exception as e:
-            self.usage_stats["errors"] += 1
+            with self._lock:
+                self.usage_stats["errors"] += 1
             raise self._wrap_http_error(e) from e
         return json.loads(body)
 
@@ -652,21 +727,27 @@ class LLMAgent(ChessAgent):
         max_retries: int = 2,
         on_chunk: Optional[Callable[[str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        tools: Optional[list] = None,
+        tool_choice: Optional[str] = None,
     ) -> str:
         """带错误分类退避重试的对话调用:
         - 401/403/400 等客户端错误: 立即失败不重试
-        - 429: 按 Retry-After 退避; 5xx/网络异常: 指数退避
-        - 流式已推送部分内容后失败: 不重试 (避免 UI 重复输出), 直接上抛
-        - 全程受总 deadline 约束, 取消检查贯通
+        - 429: 按 Retry-After 退避; 5xx/网络异常: 指数退避 (可中断 sleep)
+        - 遵守 self.stream 配置 (stream=False 时非流式请求并在完成后触发 on_chunk)
+        - 全程受总 deadline (默认 45s) 约束, 取消检查贯通
         """
         url = self._chat_endpoint()
-        use_stream = self.stream or (on_chunk is not None)
+        use_stream = bool(self.stream)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "max_tokens": min(self.max_tokens, 1500),
             "temperature": 0.6,
         }
+        if tools:
+            payload["tools"] = tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
         payload.update(self._reasoning_payload())
         if use_stream:
             payload["stream"] = True
@@ -679,7 +760,7 @@ class LLMAgent(ChessAgent):
             "Connection": "keep-alive",
         }
 
-        deadline = time.monotonic() + self.timeout * (max_retries + 1)
+        deadline = time.monotonic() + min(self.timeout * (max_retries + 1), 45.0)
         last_error: Optional[Exception] = None
 
         for attempt in range(max_retries + 1):
@@ -691,9 +772,10 @@ class LLMAgent(ChessAgent):
                 if remaining <= 0:
                     raise LLMTransportError("总超时预算耗尽", retryable=False)
                 timeout = max(1, min(self.timeout, remaining))
-                self.usage_stats["calls"] += 1
-                if use_stream:
-                    self.usage_stats["stream_calls"] += 1
+                with self._lock:
+                    self.usage_stats["calls"] += 1
+                    if use_stream:
+                        self.usage_stats["stream_calls"] += 1
                 req = urllib.request.Request(url, data=data, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     if use_stream:
@@ -731,7 +813,8 @@ class LLMAgent(ChessAgent):
                 return content
             except Exception as e:
                 last_error = e
-                self.usage_stats["errors"] += 1
+                with self._lock:
+                    self.usage_stats["errors"] += 1
                 err = e if isinstance(e, LLMTransportError) else self._wrap_http_error(e)
                 # 流式已向 UI 推送内容后失败: 不重试, 避免重复输出
                 if use_stream and emitted_len > 0:
@@ -742,7 +825,16 @@ class LLMAgent(ChessAgent):
                 delay = err.retry_after if err.retry_after else 0.5 * (2 ** attempt)
                 logger.info("LLM 调用失败 (第 %d 次, %s), %.1fs 后重试",
                             attempt + 1, err, delay)
-                time.sleep(delay)
+                # 可中断睡眠
+                sleep_end = time.monotonic() + delay
+                while time.monotonic() < sleep_end:
+                    if is_cancelled and is_cancelled():
+                        return ""
+                    if time.monotonic() >= deadline:
+                        raise LLMTransportError("总超时预算耗尽", retryable=False)
+                    time.sleep(min(0.05, max(0.005, sleep_end - time.monotonic())))
+
+        raise last_error or RuntimeError("LLM API 调用失败")
 
         raise last_error or RuntimeError("LLM API 调用失败")
 

@@ -143,7 +143,22 @@ class StockfishClient:
                     if tok == "multipv" and i + 1 < len(tokens):
                         multipv_index = int(tokens[i + 1])
                     elif tok == "cp" and i + 1 < len(tokens):
-                        score_cp = int(tokens[i + 1])
+                        try:
+                            score_cp = int(tokens[i + 1])
+                        except ValueError:
+                            score_cp = None
+                    elif tok == "mate" and i + 1 < len(tokens):
+                        try:
+                            mate_in = int(tokens[i + 1])
+                            # 将死分数转换为超大分值，保留步数距离判定
+                            if mate_in > 0:
+                                score_cp = 100000 - mate_in * 100
+                            elif mate_in < 0:
+                                score_cp = -100000 - mate_in * 100
+                            else:
+                                score_cp = 100000
+                        except ValueError:
+                            score_cp = None
                     elif tok == "pv":
                         pv = tokens[i + 1:]
                         break

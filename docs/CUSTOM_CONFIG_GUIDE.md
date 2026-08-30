@@ -90,9 +90,15 @@ STOCKFISH_ELO_PRESETS = [
     "Queen's Gambit": 5
   },
   "frequent_blunders": {
-    "Nf6": 2
+    "Nf6(Mistake)": 2
   },
-  "playstyle_tag": "沉稳战术型"
+  "playstyle_tag": "沉稳战术型",
+  "weakness_notes": [
+    "第 14 步漏着 Nxe5 (损失 -360.0cp)"
+  ],
+  "coach_advices": [
+    "在中后局行棋前需重点复核潜在战术战机与王翼安全防护"
+  ]
 }
 ```
 
@@ -162,6 +168,8 @@ controller.set_teaching(triggers)
 ## 七、AI 综合设置与在线 LLM 接入
 
 ### 7.1 持久化结构 (`data/settings.json`)
+> **安全说明**：`settings.json` 在保存时会自动设置 `0600`（仅属主读写）文件权限，防止本地多用户环境凭据泄露。
+
 ```json
 {
   "persona": "你的自定义女仆人设...",

@@ -41,7 +41,8 @@ src/agents/
   - 偏好开局统计（如 `Sicilian Defense: 12次`）。
   - 高频失误走法与战术漏洞统计。
   - 自动打标棋风标签（如“沉稳战术型”、“激进易漏防型”）。
-- **注入方式**：在终局 Coach Mode 复盘或特定教学提问时，通过 `get_summary_prompt()` 注入玩家档案，实现真正的主仆陪伴感。
+  - 终局 LLM 复盘战术漏洞与教练针对性建议蒸馏记录（`record_distilled_insight`）。
+- **注入方式**：在终局 Coach Mode 复盘或特定教学提问时，通过 `get_summary_prompt()` 注入玩家档案与历史暴露弱点，实现真正的主仆陪伴成长感。
 
 ---
 
@@ -55,7 +56,7 @@ src/agents/
 | **历史对局检索** (`query_game_history`) | `history_store.query_database(category="history", ...)` | `limit: int = 3` (检索玩家已归档历史对局及总结) | 复盘对比或玩家询问过往战绩 |
 | **引擎深度分析** (`engine_analyze`) | `stockfish_client.get_state("analyse", ...)` | `fen: str, depth: int = 12, multipv: int = 2` (多 PV 评估与主变例) | 推演复杂局面战术后续 |
 | **联网知识搜索** (`search_chess_knowledge`) | `game_controller._agent_web_search(query)` | `query: str` (检索大师历史战役、棋理概念或战术术语) | 玩家询问棋界历史或战术理论 |
-| **向玩家发送悔棋请求** (`request_undo`) | `game_controller._agent_request_undo(reason)` | `reason: str` (女仆在面临绝境严重劣势时向玩家撒娇/申请悔棋) | 女仆对弈模式下劣势触发 |
+| **向玩家发送悔棋请求** (`request_undo`) | `game_controller._agent_request_undo(reason)` | `reason: str` (女仆在面临绝境严重劣势时向玩家撒娇/申请悔棋，带单局防刷节流) | 女仆对弈模式下劣势触发 |
 
 ---
 
@@ -63,15 +64,9 @@ src/agents/
 
 在女仆对弈模式（`VS_MAID_LLM`）中，`LLMAgent.get_move` 采用严格的结构化输出规范，彻底告别正则提取缺陷：
 
-```python
-# 要求 LLM 严格返回 JSON 格式
-{
-  "thought": "控制中心关键格 d5 并准备王翼出子",
-  "best_move_uci": "e7e5"
-}
-```
-- **校验逻辑**：校验提取的 `best_move_uci` 必须严格包含在当前棋盘 `board.legal_moves` 列表中。
-- **容错降级**：若 API 超时或返回非法着法，自动调用 Stockfish 引擎（`movetime_ms=300`）或开局库进行兜底，确保对局 100% 顺畅进行。
+- **Strict Mode 支持**：针对兼容端点自动下发带有 `legal_uci_list` 枚举约束的 `json_schema`，杜绝幻觉着法；
+- **自纠错机制**：非 strict 端点下若模型输出非法着法，自动注入错误反馈发起自纠错重试；
+- **容错降级**：若 API 依然超时或返回非法着法，自动调用 Stockfish 引擎（`movetime_ms=300`）进行兜底，确保对局 100% 顺畅进行。
 
 ---
 
@@ -123,6 +118,7 @@ src/agents/
 ## 6. HTTP 传输、弹性流式与多角色协同
 
 1. **`ResilientStreamParser`**：
+   - 内置 UTF-8 增量解码器，彻底杜绝 256 字节分片截断多字节中文乱码（U+FFFD）。
    - 双缓冲 SSE 流式解析，实时过滤 `data: [DONE]`。
    - 具备代码块自愈闭合能力（奇数个 ` ``` ` 自动在尾部补齐）。
    - 支持通过 `is_cancelled` 标志在玩家快速下子时即时中断在途流。
@@ -131,8 +127,9 @@ src/agents/
    - `MaidPersonaRole`：第二阶段人格化改写（保留棋理结论不改事实）；`local_compose` 为零网络降级组合。
    - 终局复盘总结默认走两段式流水线（`AgentRequest.two_stage`）。
 3. **HTTP 传输韧性**：
-   - 401/403 等客户端错误立即失败不重试；429 按 `Retry-After`、5xx/网络异常指数退避。
-   - 流式已推送内容后中断不再重试（杜绝 UI 重复输出）；全程总 deadline 超时。
+   - 401/403 等客户端错误立即失败不重试；429 按 `Retry-After`、5xx/网络异常指数退避（支持可中断 sleep）。
+   - 流式已推送内容后中断不再重试（杜绝 UI 重复输出）；全程总 45s deadline 超时。
+   - 严格尊重 `stream=False` 配置（支持无 SSE 代理的非流式环境）。
    - `get_move` 失败降级 Stockfish 并通过 `llm_fallback_used` 信号向 UI 披露来源。
 4. **防注入纵深**：System 护栏模板 + 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出统一沙箱截断（`_sandbox_tool_output`）。
-5. **Token 成本工程**：PGN 单源化（仅系统上下文块尾部窗口）+ 短期记忆只存意图标签 + 语义缓存 + 工具输出截断。
+5. **Token 成本工程**：PGN 单源化（仅系统上下文块尾部窗口）+ 短期记忆只存意图标签 + 语义缓存（涵盖局面/开关/人设/模型）+ 工具输出截断 + 自动教学单向人类玩家门控。

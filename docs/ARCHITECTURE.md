@@ -159,18 +159,20 @@
     * `AgentTools`: 注入 5 大工具接口（开局库、历史库、引擎分析、联网搜索、悔棋申请）。
     * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history` + `tools`）。
   * `llm_agent.py` (`LLMAgent`, `ResilientStreamParser`, `LLMTransportError`):
-    * 支持 OpenAI 兼容规范与流式打字机回调；HTTP 错误分类（401/403 不重试、429 按 Retry-After 退避、5xx 指数退避）与总 deadline 超时。
-    * 流式重试不再重复推送已输出内容；取消检查贯通 `reply`/`get_move` 与 SSE 读取循环。
-    * `get_move`: 结构化 JSON 输出 + 非法着法自纠错重试；失败降级 Stockfish 并经 `last_move_source` + `llm_fallback_used` 信号向 UI 披露（已移除随机走法兜底）。
+    * 支持 OpenAI 兼容规范与流式打字机回调；HTTP 错误分类（401/403 不重试、429 按 Retry-After 退避、5xx 指数退避）与总 45s deadline 超时。
+    * 内置 UTF-8 增量解码器，彻底杜绝 256 字节分片截断多字节中文乱码（U+FFFD）。
+    * 流式重试不再重复推送已输出内容；取消检查贯通 `reply`/`get_move` 与 SSE 读取循环；重试睡眠采用可中断分片。
+    * `get_move`: 支持 OpenAI Strict `json_schema` 结构化输出与 `json_object` 非法着法带反馈自纠错重试；失败降级 Stockfish 并经 `last_move_source` + `llm_fallback_used` 信号向 UI 披露（已移除随机走法兜底）。
+    * 劣势悔棋申请具备单局状态防重复刷屏节流保护。
     * 分层防注入：System 护栏（`prompt_registry:system_guard`）+ 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出沙箱截断。
-    * Token 用量统计（`get_usage_stats`）与统一日志。
+    * 线程安全用量统计锁（`_lock`）与统一日志。
   * `semantic_cache.py` (`SemanticCache`):
-    * 自动教学/主动询问等确定性请求（局面+开关）的 LRU 结果缓存，命中直接复用回复。
+    * 自动教学/主动询问等确定性请求（局面+开关+人设+模型）的 LRU 结果缓存，命中直接复用回复。
   * `prompt_registry.py`:
     * 全部 Prompt 模板集中版本化管理（人设唯一来源指向 `config.DEFAULT_MAID_PERSONA`）。
   * `memory.py` (`ShortTermMemory`, `LongTermMemory`, `PlayerProfile`):
     * `ShortTermMemory`: 维护最近对局滑动窗口对话历史。
-    * `LongTermMemory`: 跨对局持久化玩家胜率、偏好开局、高频失误与棋风标签（`data/player_profile.json`）。
+    * `LongTermMemory`: 跨对局持久化玩家胜率、偏好开局、高频失误与棋风标签（`data/player_profile.json`），支持从 Coach 复盘中蒸馏玩家漏洞与教练建议（`record_distilled_insight`）。
   * `multi_role.py` (`CoachRole`, `MaidPersonaRole`, `MultiRoleCoordinator`):
     * 两段式流水线（终局总结默认启用）：教练低温 JSON 结构化分析 → 女仆人格化改写；`local_compose` 提供零网络降级组合。
   * `prompt_builder.py` (`PromptBuilder`):

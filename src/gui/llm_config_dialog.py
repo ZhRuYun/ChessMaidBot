@@ -5,8 +5,9 @@ LLM 配置对话框 (模块1 - GUI)
   2. 教学触发器配置 (总开关 + 4 个子开关)
   3. 自定义 AI 人设 (预设模板 + 自定义编辑)
 """
-from typing import Optional
+from typing import Optional, List
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
     QDialogButtonBox, QLabel, QCheckBox, QComboBox,
@@ -17,6 +18,28 @@ from .persona_config_dialog import PERSONA_PRESETS
 from ..controller.teaching_triggers import TeachingTriggers
 from ..config import DEFAULT_MAID_PERSONA
 from ..agents.llm_agent import LLMAgent
+
+
+class FetchModelsWorker(QThread):
+    """后台异步测试连接与拉取远端模型列表的线程，杜绝 GUI 冻结"""
+    models_ready = Signal(list)
+    fetch_failed = Signal(str)
+
+    def __init__(self, api_base: str, api_key: str, timeout: int = 8, parent=None):
+        super().__init__(parent)
+        self.api_base = api_base
+        self.api_key = api_key
+        self.timeout = timeout
+        self.finished.connect(self.deleteLater)
+
+    def run(self):
+        try:
+            models = LLMAgent.test_connection_and_fetch_models(
+                self.api_base, self.api_key, timeout=self.timeout
+            )
+            self.models_ready.emit(models)
+        except Exception as e:
+            self.fetch_failed.emit(str(e))
 
 
 class LLMConfigDialog(QDialog):
@@ -395,14 +418,18 @@ class LLMConfigDialog(QDialog):
         self.key_input.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
 
     def _on_test_connection(self):
-        """测试 API 连接 (复用统一入口 test_connection_and_fetch_models)"""
+        """异步测试 API 连接，避免阻塞 GUI"""
         api_base = self.base_input.text().strip() or "https://api.deepseek.com"
         api_key = self.key_input.text().strip()
 
         self.btn_test_conn.setEnabled(False)
         self.btn_test_conn.setText("测试中...")
-        try:
-            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
+
+        worker = FetchModelsWorker(api_base, api_key, timeout=8, parent=self)
+
+        def _on_success(models):
+            self.btn_test_conn.setEnabled(True)
+            self.btn_test_conn.setText("测试连接")
             if models:
                 QMessageBox.information(
                     self, "连接成功",
@@ -414,25 +441,32 @@ class LLMConfigDialog(QDialog):
                     self, "连接异常",
                     "API 可达，但未返回任何模型。请检查 API Key 权限或 Base URL 是否正确。"
                 )
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "连接失败",
-                f"未能连通 API 接口：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
-            )
-        finally:
+
+        def _on_failed(err_msg):
             self.btn_test_conn.setEnabled(True)
             self.btn_test_conn.setText("测试连接")
+            QMessageBox.warning(
+                self, "连接失败",
+                f"未能连通 API 接口：\n\n{err_msg}\n\n请检查 Base URL、API Key 或网络连接。"
+            )
+
+        worker.models_ready.connect(_on_success)
+        worker.fetch_failed.connect(_on_failed)
+        worker.start()
 
     def _on_fetch_models(self):
-        """拉取远端模型列表 (复用统一入口 test_connection_and_fetch_models)"""
+        """异步拉取远端模型列表，避免阻塞 GUI"""
         api_base = self.base_input.text().strip() or "https://api.deepseek.com"
         api_key = self.key_input.text().strip()
 
         self.btn_fetch_models.setEnabled(False)
         self.btn_fetch_models.setText("拉取中...")
-        try:
-            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
+
+        worker = FetchModelsWorker(api_base, api_key, timeout=8, parent=self)
+
+        def _on_success(models):
+            self.btn_fetch_models.setEnabled(True)
+            self.btn_fetch_models.setText("拉取模型")
             if models:
                 self.remote_models_combo.blockSignals(True)
                 self.remote_models_combo.clear()
@@ -442,25 +476,26 @@ class LLMConfigDialog(QDialog):
                 self.remote_models_combo.blockSignals(False)
                 self.remote_models_combo.setVisible(True)
                 QMessageBox.information(
-                    self,
-                    "拉取成功",
+                    self, "拉取成功",
                     f"共拉取到 {len(models)} 个模型。\n您可在右侧下拉框中直接选择，或继续手动输入。"
                 )
             else:
                 QMessageBox.information(
-                    self,
-                    "拉取提示",
+                    self, "拉取提示",
                     "成功连通 API 服务，但返回的模型列表为空。您可以直接在输入框填写模型名称。"
                 )
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "拉取失败",
-                f"拉取模型失败：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
-            )
-        finally:
+
+        def _on_failed(err_msg):
             self.btn_fetch_models.setEnabled(True)
             self.btn_fetch_models.setText("拉取模型")
+            QMessageBox.warning(
+                self, "拉取失败",
+                f"拉取模型失败：\n\n{err_msg}\n\n请检查 Base URL、API Key 或网络连接。"
+            )
+
+        worker.models_ready.connect(_on_success)
+        worker.fetch_failed.connect(_on_failed)
+        worker.start()
 
     def _on_test_fetch_models(self):
         """兼容旧接口"""
