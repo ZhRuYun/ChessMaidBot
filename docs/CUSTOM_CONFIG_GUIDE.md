@@ -58,7 +58,7 @@ python3 scripts/download_assets.py
   ```python
   STOCKFISH_DEFAULT_SKILL = 10   # 默认 Skill Level (0 ~ 20)
   STOCKFISH_DEFAULT_ELO = 1500     # 默认目标 Elo 等级分
-  STOCKFISH_MIN_ELO = 1320         # 引擎支持的最低 Elo
+  STOCKFISH_MIN_ELO = 500          # 引擎支持的最低 Elo (低于 1320 自动映射 Skill Level 降级)
   STOCKFISH_MAX_ELO = 3190         # 引擎支持的最高 Elo
   ```
 
@@ -115,7 +115,7 @@ BOARD_SIZE = DEFAULT_SQUARE_SIZE * 8
 
 ## 五、教学触发器配置
 
-通过 `TeachingTriggers` 控制落子自动触发与右侧面板开关：
+通过 `TeachingTriggers` 控制落子自动触发与 AI 综合设置面板开关：
 
 ```python
 from src.controller.teaching_triggers import TeachingTriggers

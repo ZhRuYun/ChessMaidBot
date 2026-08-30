@@ -11,18 +11,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal
 import markdown
 
-from ..controller.teaching_triggers import TeachingTriggers
 from .loading_spinner import LoadingSpinner
 
 
 class ChatPanel(QWidget):
     message_sent = Signal(str)
     ask_llm_requested = Signal()
-    teaching_triggers_changed = Signal(object)
 
-    def __init__(self, triggers: TeachingTriggers, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.triggers = triggers
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)

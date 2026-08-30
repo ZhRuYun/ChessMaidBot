@@ -30,7 +30,7 @@
  │ 模块 1: GUI 交互界面 (src/gui/)                                                         │
  │  ├── MoveHistoryPanel (左侧: 双栏记谱纯渲染表格)                                        │
  │  ├── ChessBoardWidget (中央: 纯绘制与事件捕获)                                         │
- │  ├── ChatPanel (右侧: LLM 对话展示, 主动询问LLM, 5 级教学开关与 LoadingSpinner 转圈)   │
+ │  ├── ChatPanel (右侧: LLM 对话展示, 主动询问LLM 与 LoadingSpinner 转圈)                 │
  │  ├── ControlBar (顶部: 模式选择 / Elo 调节 / 认输 / 求和 / 导出棋局状态(PGN+FEN))       │
  │  ├── LoadingSpinner (现代极简平滑旋转指示器)                                            │
  │  └── PromotionDialog (升变选择框)                                                      │
@@ -70,7 +70,7 @@
 1. **模块 1: GUI 交互界面**
    - 居中自研矢量高清直绘棋盘（抗锯齿、拖拽/点击、王车易位、升变选择、将军高亮）。
    - 左侧纯双栏记谱表格（被动响应式整表重建，单一数据源，浅色/深色主题完整适配）。
-   - 右侧 LLM 聊天面板（Markdown 气泡渲染、快捷提问条、5 级教学触发器复选框）。
+   - 右侧 LLM 聊天面板（Markdown 气泡渲染、快捷提问条、LoadingSpinner 状态徽章）。
    - 顶部控制栏（模式下拉切换、Stockfish 目标 Elo 微调、新局、悔棋、翻转、认输、求和、PGN/FEN 导出、浅色/深色主题）。
 2. **模块 2: Controller 调度中枢层**
    - 棋局状态唯一写入口（`apply_move`, `undo`, `resign`, `offer_draw`, `accept_draw`, `new_game`）。
@@ -110,8 +110,8 @@
 * **主要文件**：
   * `chess_board.py` (`ChessBoardWidget`): 居中展示。基于 PySide6 + QSvgRenderer 矢量直绘，支持抗锯齿、拖拽和点击落子、Lichess 风格王车易位、将军红色高亮。捕获合法落子后发送 `move_ready(chess.Move)` 信号。
   * `move_history_panel.py` (`MoveHistoryPanel`): 布局在左侧。纯双栏记谱表格，通过 `set_records(records)` 方法整表重建渲染。
-   * `chat_panel.py` (`ChatPanel`): 布局在右侧。包含女仆状态标头、LoadingSpinner 转圈动效、5 级教学触发器复选框、Markdown 气泡流展示、“✨ 主动询问女仆指导” 按钮及统一输入框。
-   * `control_bar.py` (`ControlBar`): 顶部控制条。包含模式下拉列表、Stockfish 目标 Elo 微调框（1320~3190）、新对局、悔棋、翻转棋盘、🤝 求和、🏳️ 认输、📋 导出棋局状态 (PGN+FEN 一键复制到剪贴板) 按钮。
+   * `chat_panel.py` (`ChatPanel`): 布局在右侧。包含女仆状态标头、LoadingSpinner 转圈动效、Markdown 气泡流展示、“✨ 主动询问女仆指导” 按钮及统一输入框。
+   * `control_bar.py` (`ControlBar`): 顶部控制条。包含模式下拉列表、Stockfish 目标 Elo 微调框（500~3190）、新对局、悔棋、翻转棋盘、🤝 求和、🏳️ 认输、📋 导出棋局状态 (PGN+FEN 一键复制到剪贴板) 按钮。
    * `loading_spinner.py` (`LoadingSpinner`): 现代极简圆形旋转平滑加载控件。
    * `main_window.py` (`MainWindow`): 装配中心，负责将 Controller 的广播信号与各 GUI 面板的槽函数连接，并管理 `LLMWorker` 后台异步响应。
 
@@ -125,7 +125,7 @@
     * 在终局时组合 `export_pgn()` 与 LLM 总结回调，生成复合文件写入数据库。
   * `game_modes.py` (`GameModeManager`):
     * 枚举 `GameMode`: `LOCAL_PVP` (本地双人), `VS_ENGINE` (人机对弈), `VS_MAID_LLM` (女仆陪练)。
-    * 管理引擎强度模式（`use_elo` 开关，目标 Elo: 1320 ~ 3190，Skill Level: 0 ~ 20）。
+    * 管理引擎强度模式（`use_elo` 开关，目标 Elo: 500 ~ 3190，Skill Level: 0 ~ 20）。
   * `teaching_triggers.py` (`TeachingTriggers`):
     * 数据结构：`master_enabled` (总开关), `eval_current_position` (当下局面评估), `suggest_moves` (建议着法), `eval_history_moves` (历史走法失误预警), `game_over_summary` (棋局结束总结)。
 
@@ -147,7 +147,7 @@
   * `stockfish_client.py` (`StockfishClient`):
     * 自动探测 `engines/stockfish` 可执行文件。
     * 提供 `start()`, `quit()`, `set_skill_level(level: 0~20)`。
-    * 提供 `set_elo(elo: 1320~3190)`：通过 UCI 选项 `UCI_LimitStrength` 与 `UCI_Elo` 精准控制目标 Elo。
+    * 提供 `set_elo(elo: 500~3190)`：通过 UCI 选项 `UCI_LimitStrength` 与 `UCI_Elo` 精准控制目标 Elo。
     * `best_move(fen, movetime_ms)`: 计算最佳单步走法。
     * `analyse(fen, depth, multipv)`: 返回多 PV 分析结果列表（包含评分 `score_cp` 与着法主变例 `pv`）。
     * `get_state(fen, state_type, **kwargs)`: 为 Agent 与上层模块提供统一引擎状态查询接口。

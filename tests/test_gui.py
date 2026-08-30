@@ -25,8 +25,7 @@ class TestGUI(unittest.TestCase):
         history = MoveHistoryPanel()
         self.assertIsNotNone(history)
 
-        triggers = TeachingTriggers()
-        chat = ChatPanel(triggers=triggers)
+        chat = ChatPanel()
         self.assertIsNotNone(chat)
 
 

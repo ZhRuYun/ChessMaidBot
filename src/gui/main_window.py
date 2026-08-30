@@ -201,11 +201,10 @@ class MainWindow(QMainWindow):
         self.content_splitter.addWidget(board_widget)
 
         # [右侧]：LLM 女仆互动对话窗口
-        self.chat_panel = ChatPanel(self.controller.teaching, self.content_splitter)
+        self.chat_panel = ChatPanel(self.content_splitter)
         self.chat_panel.setMinimumWidth(260)
         self.chat_panel.message_sent.connect(self.on_user_chat_message)
         self.chat_panel.ask_llm_requested.connect(self.on_ask_llm_requested)
-        self.chat_panel.teaching_triggers_changed.connect(self.controller.set_teaching)
         self.content_splitter.addWidget(self.chat_panel)
 
         # 默认比例接近原布局；之后可拖动任一竖线自由调整相邻区域宽度。

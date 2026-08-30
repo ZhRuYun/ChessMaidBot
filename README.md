@@ -51,7 +51,7 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 | | 标准化上下文请求包（`AgentRequest`）与工具库（`AgentTools`） | ✅ 已完成 | 支持开局库查询候选走法及权重、历史对局查询与归档检索、Stockfish 引擎状态读取与联网搜索工具 |
 | | 真实在线 LLM API 接入与女仆走子（`get_move`） | ✅ 已完成 | 支持 OpenAI 兼容规范、思考档位、流式输出与陪练走子 |
 | **6. 数据库** | 历史棋局库持久化（PGN + LLM 总结复合格式） | ✅ 已完成 | 异步写入 `data/games/`，支持双向拆解与查询检索 |
-| | 开局库、EPD 编码战术库、残局库接入与独立资源管理 | ✅ 已完成 | 数据剥离独立存储于 `data/` 目录，配套 `scripts/download_assets.py` 一键初始化脚本 |
+| | 开局库接入与统一资源管理 | ✅ 已完成 | 数据剥离独立存储于 `data/books/` 目录，配套 `scripts/download_assets.py` 一键初始化脚本 |
 
 ---
 
@@ -62,7 +62,7 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 模块 1: GUI 交互界面 (src/gui/)                                          │
-│ [左] 走法历史记谱表  │  [中] 交互式棋盘+状态栏  │  [右] LLM 对话窗口+教学触发器 │
+│ [左] 走法历史记谱表  │  [中] 交互式棋盘+状态栏  │  [右] LLM 对话窗口+教学配置   │
 │ 顶部控制栏: 模式选择 / Stockfish Elo 微调 / 认输 / 求和 / 导出 PGN & FEN   │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 意图信号 (move_ready / resign / draw)
@@ -75,7 +75,7 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 │ 模块 3: 规则核心  │        │ 模块 4: 引擎调度   │ │ 模块 6: 数据库存储   │
 │ src/core/        │        │ src/engine/        │ │ src/database/        │
 │ 局面状态管理      │        │ Stockfish 客户端   │ │ 历史棋局库 (PGN+总结)│
-│ 双栏记谱 & 快照   │        │ 目标 Elo / UCI 通信│ │ 开局/战术/残局库接口 │
+│ 双栏记谱 & 快照   │        │ 目标 Elo / UCI 通信│ │ 开局库接口           │
 └──────────────────┘        └────────┬──────────┘ └───────────────────────┘
                                      │ (提供引擎分析)
                             ┌────────▼──────────┐
@@ -140,7 +140,7 @@ ChessMaidBot/
 │   ├── controller/             # [模块2] 调度层 (GameController, GameModeManager, EngineWorker)
 │   ├── engine/                 # [模块4] Stockfish UCI 通信客户端 (StockfishClient)
 │   ├── agents/                 # [模块5] Agent 抽象、LLM客户端与 PromptBuilder (ChessAgent, LLMAgent, PromptBuilder)
-│   ├── database/               # [模块6] 统一数据库管理(UnifiedDatabase)、历史棋局库持久化、开局库(Polyglot)、战术库(EPD)与残局库(Syzygy/启发式)
+│   ├── database/               # [模块6] 统一数据库管理(UnifiedDatabase)、历史棋局库持久化、开局库(Polyglot/JSON)
 │   └── gui/                    # [模块1] PySide6 现代极简视图组件 (中央棋盘、记谱表、聊天框、LLM/人设配置弹窗等)
 └── tests/                      # 单元测试与集成测试 (覆盖六大模块核心链路)
 ```
@@ -196,9 +196,9 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests
 
 ## 九、团队与 AI 协作规范
 
-1. **人类开发者**：在添加新功能前，请通读 [`ARCHITECTURE.md`](./ARCHITECTURE.md)，保持分层清晰。
+1. **人类开发者**：在添加新功能前，请通读 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)，保持分层清晰。
 2. **AI 模型（LLM/Coding Agent）**：
-   - **所有协助修改代码的 AI 模型必须强制遵循 [`AGENTS.md`](./AGENTS.md) 的规则**。
+   - **所有协助修改代码的 AI 模型必须强制遵循 [`docs/AGENTS.md`](./docs/AGENTS.md) 的规则**。
    - 严禁绕过 `GameController` 直接在 GUI 中修改棋局规则状态。
    - 任何新增接口或模块结构变更，**必须同步更新相关文档**。
 
