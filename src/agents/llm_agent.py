@@ -93,11 +93,13 @@ class LLMAgent(ChessAgent):
         """根据标准请求包调用 LLM API 并返回 Markdown 回复; API 不可用时回退"""
         tool_logs: list[str] = []
         if request.tools:
-            if request.tools.read_database:
-                tool_logs.append("read_database(opening)")
-            if request.tools.read_engine_state:
-                tool_logs.append("read_engine_state(analyse)")
-            if request.tools.web_search:
+            if getattr(request.tools, "query_opening", None) or getattr(request.tools, "read_database", None):
+                tool_logs.append("query_opening")
+            if getattr(request.tools, "query_history", None):
+                tool_logs.append("query_history")
+            if getattr(request.tools, "read_engine_state", None):
+                tool_logs.append("read_engine_state")
+            if getattr(request.tools, "web_search", None):
                 tool_logs.append("web_search")
 
         # 若 API Key 为空, 直接回退
@@ -155,10 +157,10 @@ class LLMAgent(ChessAgent):
         snap = request.snapshot
         parts.append(self._format_snapshot(snap))
 
-        # 2. 数据库开局/残局/历史走法知识 (可选)
-        db_context = self._fetch_db_context(request)
-        if db_context:
-            parts.append(db_context)
+        # 2. 开局库推荐走法与名称识别 (可选)
+        opening_context = self._fetch_opening_context(request)
+        if opening_context:
+            parts.append(opening_context)
 
         # 3. 引擎实时评估 (仅当 tools 可用时主动读取, 失败则静默跳过)
         engine_eval = self._fetch_engine_eval(request)
@@ -167,19 +169,30 @@ class LLMAgent(ChessAgent):
 
         return "\n\n".join(parts)
 
-    def _fetch_db_context(self, request: AgentRequest) -> str:
-        """通过 AgentTools 读取开局库/战术库/残局知识"""
+    def _fetch_opening_context(self, request: AgentRequest) -> str:
+        """通过 AgentTools 查询开局库走法与开局名称"""
         tools = request.tools
-        if tools is None or tools.read_database is None:
+        if tools is None:
             return ""
         try:
-            # 尝试查询开局库
-            opening_data = tools.read_database("opening", {"fen": request.snapshot.fen})
-            if opening_data and isinstance(opening_data, dict) and opening_data.get("available"):
-                moves = opening_data.get("moves", [])
+            opening_data = None
+            if getattr(tools, "query_opening", None):
+                opening_data = tools.query_opening(request.snapshot.fen, 3)
+            elif getattr(tools, "read_database", None):
+                opening_data = tools.read_database("opening", {"fen": request.snapshot.fen, "limit": 3})
+
+            if opening_data and isinstance(opening_data, dict):
+                lines = []
+                name = opening_data.get("name")
+                eco = opening_data.get("eco")
+                if name and name != "Unknown Opening":
+                    lines.append(f"【开局名称】: {name} (ECO: {eco})")
+                moves = opening_data.get("recommended_moves", []) or opening_data.get("moves", [])
                 if moves:
                     move_strs = [f"{m.get('san', m.get('uci'))} (权重:{m.get('weight', 0)})" for m in moves[:3]]
-                    return f"【开局库推荐候选走法】: {', '.join(move_strs)}"
+                    lines.append(f"【开局库候选走法及权重】: {', '.join(move_strs)}")
+                if lines:
+                    return "\n".join(lines)
         except Exception:
             pass
         return ""

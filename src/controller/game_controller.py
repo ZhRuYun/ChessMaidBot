@@ -475,16 +475,24 @@ class GameController(QObject):
             game_over_reason=status["reason"] if status["is_over"] else "",
         )
 
-    def _agent_read_database(self, category: str = "history", params: Optional[Dict[str, Any]] = None) -> Any:
-        """为 LLM 提供的数据库读取方法 (模块5方法 1 & 2)"""
+    def _agent_query_opening(self, fen: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
+        """开局库查询候选走法及权重"""
+        fen_to_query = fen or self.board_state.get_fen()
+        return self.history_store.query_database(category="opening", fen=fen_to_query, limit=limit)
+
+    def _agent_query_history(self, limit: int = 5, filter_useless: bool = True) -> Dict[str, Any]:
+        """历史对局查询与归档检索"""
+        return self.history_store.query_database(category="history", limit=limit, filter_useless=filter_useless)
+
+    def _agent_read_database(self, category: str = "opening", params: Optional[Dict[str, Any]] = None) -> Any:
+        """为 LLM 提供的数据库读取统一入口 (支持 opening 与 history)"""
         params = dict(params or {})
-        # 默认填入当前局面 FEN 方便开局/残局直接查询
-        if "fen" not in params and category in ("opening", "tactics", "endgame"):
+        if category == "opening" and "fen" not in params:
             params["fen"] = self.board_state.get_fen()
         return self.history_store.query_database(category=category, **params)
 
     def _agent_read_engine_state(self, state_type: str = "best_move", params: Optional[Dict[str, Any]] = None) -> Any:
-        """为 LLM 提供的 Stockfish 状态读取方法 (模块5方法 3 & 4)"""
+        """为 LLM 提供的引擎状态读取工具 (支持 best_move / analyse / eval)"""
         params = params or {}
         with StockfishClient() as client:
             if self.modes.use_elo and self.modes.target_elo is not None:
@@ -547,6 +555,8 @@ class GameController(QObject):
 
     def build_agent_request(self, user_message: str, persona_prompt: str) -> AgentRequest:
         tools = AgentTools(
+            query_opening=self._agent_query_opening,
+            query_history=self._agent_query_history,
             read_database=self._agent_read_database,
             read_engine_state=self._agent_read_engine_state,
             web_search=self._agent_web_search,

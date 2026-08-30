@@ -48,7 +48,7 @@ ChessMaidBot 旨在打破传统国际象棋软件冷冰冰的对弈体验，通�
 | | 目标 Elo 控制（`UCI_LimitStrength` + `UCI_Elo`） | ✅ 已完成 | 支持 500 ~ 3190 连续 Elo 调节与 Skill Level (0~20) 映射调节 |
 | | 多 PV 着法分析与评分（`analyse` / `get_state`） | ✅ 已完成 | 提供引擎状态统一读取能力 |
 | **5. Agent 接口与方法库** | 自定义 LLM 人设 Prompt 注入与精炼 PromptBuilder | ✅ 已完成 | 输出精简短小（150字内），彻底移除 emoji，注入游戏模式信息 |
-| | 标准化上下文请求包（`AgentRequest`）与工具库（`AgentTools`） | ✅ 已完成 | 支持开局库、战术库、残局库、引擎状态读取与持久化联网搜索接口（兼容免 key 模式） |
+| | 标准化上下文请求包（`AgentRequest`）与工具库（`AgentTools`） | ✅ 已完成 | 支持开局库查询候选走法及权重、历史对局查询与归档检索、Stockfish 引擎状态读取与联网搜索工具 |
 | | 真实在线 LLM API 接入与女仆走子（`get_move`） | ✅ 已完成 | 支持 OpenAI 兼容规范、思考档位、流式输出与陪练走子 |
 | **6. 数据库** | 历史棋局库持久化（PGN + LLM 总结复合格式） | ✅ 已完成 | 异步写入 `data/games/`，支持双向拆解与查询检索 |
 | | 开局库、EPD 编码战术库、残局库接入与独立资源管理 | ✅ 已完成 | 数据剥离独立存储于 `data/` 目录，配套 `scripts/download_assets.py` 一键初始化脚本 |
@@ -133,7 +133,7 @@ ChessMaidBot/
 │   └── CUSTOM_CONFIG_GUIDE.md  # 可自定义配置功能完全教程
 ├── assets/                     # 静态资源（矢量棋子 SVG 图标等）
 ├── engines/                    # 引擎存放目录（放入 stockfish 二进制）
-├── data/                       # 统一数据大目录（历史棋局 games/、开局库 books/、战术库 tactics/、残局库 syzygy/）
+├── data/                       # 统一数据大目录（历史棋局 games/、Lichess 开局库 books/）
 ├── src/                        # 核心源代码
 │   ├── config.py               # 全局配置、主题、Prompt、Elo 范围与路径定义
 │   ├── core/                   # [模块3] 规则核心与记谱 (BoardState, MoveHistoryManager)

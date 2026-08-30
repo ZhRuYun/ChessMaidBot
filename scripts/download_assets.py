@@ -2,7 +2,7 @@
 """
 一键下载安装与初始化资源脚本:
 1. 下载并安装对应操作系统与架构的官方最新/稳定 Stockfish 引擎可执行文件
-2. 初始化并补齐开局库 (openings.json)、EPD 战术题库 (tactics.epd) 与 Syzygy 残局库目录结构
+2. 检查并自动安装来自 lichess-org/chess-openings 的开局库 (openings.json)
 """
 import os
 import sys
@@ -10,6 +10,8 @@ import platform
 import shutil
 import zipfile
 import tarfile
+import json
+import io
 import urllib.request
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -19,8 +21,6 @@ sys.path.insert(0, str(BASE_DIR))
 ENGINES_DIR = BASE_DIR / "engines"
 DATA_DIR = BASE_DIR / "data"
 BOOKS_DIR = DATA_DIR / "books"
-TACTICS_DIR = DATA_DIR / "tactics"
-SYZYGY_DIR = DATA_DIR / "syzygy"
 
 USER_AGENT = "Mozilla/5.0 (compatible; ChessMaidBot-Installer/1.0)"
 
@@ -115,7 +115,6 @@ def extract_stockfish_from_archive(archive_path: Path, target_path: Path, system
     try:
         if archive_path.suffix == ".zip" or zipfile.is_zipfile(archive_path):
             with zipfile.ZipFile(archive_path, 'r') as z:
-                # 寻找最大体积的 .exe 文件或包含 stockfish 名字的非文档二进制
                 best_member = None
                 max_size = 0
                 for info in z.infolist():
@@ -211,50 +210,92 @@ def setup_stockfish() -> bool:
     return False
 
 
-def setup_databases() -> bool:
-    """初始化并补齐开局库、战术库和残局库说明"""
+def setup_openings_database() -> bool:
+    """检查并自动从 https://github.com/lichess-org/chess-openings 下载与构建开局库"""
     BOOKS_DIR.mkdir(parents=True, exist_ok=True)
-    TACTICS_DIR.mkdir(parents=True, exist_ok=True)
-    SYZYGY_DIR.mkdir(parents=True, exist_ok=True)
-
-    from src.database.opening_book import DEFAULT_OPENING_PATTERNS
-    from src.database.tactics_db import DEFAULT_EPD_TACTICS
-    import json
-
-    # 1. 开局库
     openings_file = BOOKS_DIR / "openings.json"
-    if not openings_file.exists() or openings_file.stat().st_size < 100:
+
+    # 如果已有大于 50KB 的开局库文件，则视为完备
+    if openings_file.exists() and openings_file.stat().st_size > 50000:
+        print(f"[OK] Lichess 开局库已就绪: {openings_file} ({openings_file.stat().st_size / 1024:.1f} KB)")
+        return True
+
+    print("[下载] 正在从 https://github.com/lichess-org/chess-openings 下载并构建开局库...")
+    fast_templates = [
+        "https://fastly.jsdelivr.net/gh/lichess-org/chess-openings@master/{}.tsv",
+        "https://cdn.jsdelivr.net/gh/lichess-org/chess-openings@master/{}.tsv",
+        "https://raw.githubusercontent.com/lichess-org/chess-openings/master/{}.tsv",
+    ]
+
+    import chess
+    import chess.pgn
+    from src.database.opening_book import DEFAULT_OPENING_PATTERNS
+
+    openings_db = dict(DEFAULT_OPENING_PATTERNS)
+    success_any = False
+
+    for letter in ['a', 'b', 'c', 'd', 'e']:
+        content = None
+        for template in fast_templates:
+            url = template.format(letter)
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    content = resp.read().decode("utf-8")
+                    break
+            except Exception:
+                continue
+
+        if not content:
+            print(f"[WARN] 无法获取开局库分卷 {letter}.tsv，使用默认开局库兜底")
+            continue
+
+        success_any = True
+        lines = content.splitlines()
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 3:
+                eco, name, pgn = parts[0], parts[1], parts[2]
+                try:
+                    game = chess.pgn.read_game(io.StringIO(pgn))
+                    if game:
+                        b = game.board()
+                        for m in game.mainline_moves():
+                            b.push(m)
+                        fen_core = " ".join(b.fen().split()[:4])
+                        # 存入开局映射
+                        if fen_core not in openings_db:
+                            openings_db[fen_core] = {
+                                "eco": eco,
+                                "name": name,
+                                "moves": []
+                            }
+                        else:
+                            openings_db[fen_core]["eco"] = eco
+                            openings_db[fen_core]["name"] = name
+                except Exception:
+                    pass
+
+    try:
         with open(openings_file, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_OPENING_PATTERNS, f, ensure_ascii=False, indent=2)
-        print(f"[OK] 已生成开局库文件: {openings_file}")
-    else:
-        print(f"[OK] 开局库文件完备: {openings_file}")
+            json.dump(openings_db, f, ensure_ascii=False, indent=2)
+        print(f"[OK] Lichess 开局库已成功安装并索引 ({len(openings_db)} 个局面): {openings_file}")
+        return True
+    except Exception as e:
+        print(f"[WARN] 保存开局库失败: {e}")
+        return False
 
-    # 2. 战术题库
-    tactics_file = TACTICS_DIR / "tactics.epd"
-    if not tactics_file.exists() or tactics_file.stat().st_size < 50:
-        with open(tactics_file, "w", encoding="utf-8") as f:
-            for line in DEFAULT_EPD_TACTICS:
-                f.write(line + "\n")
-        print(f"[OK] 已生成战术题库文件: {tactics_file}")
-    else:
-        print(f"[OK] 战术题库文件完备: {tactics_file}")
 
-    # 3. Syzygy 残局库目录及说明
-    readme_syzygy = SYZYGY_DIR / "README.txt"
-    if not readme_syzygy.exists():
-        with open(readme_syzygy, "w", encoding="utf-8") as f:
-            f.write(
-                "Syzygy Tablebases 残局库目录\n"
-                "如需使用 3-4-5-6 子 Syzygy 残局库，请将 .rtbw 与 .rtbz 文件放入此目录。\n"
-                "系统会自动识别并无缝挂载；若无文件则自动启用内置理论残局启发式评估器。\n"
-            )
-    return True
+def setup_databases() -> bool:
+    """初始化并补齐开局库"""
+    return setup_openings_database()
 
 
 def main():
     print("=== ChessMaidBot 依赖资源与引擎一键配置工具 ===")
-    setup_databases()
+    setup_openings_database()
     setup_stockfish()
     print("=== 准备完毕，可以直接启动应用！ ===")
 

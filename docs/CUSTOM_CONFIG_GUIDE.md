@@ -21,40 +21,24 @@
 ```
 data/
 ├── games/      # 自动存放持久化的历史棋局 (.pgn + LLM总结)
-├── books/      # Polyglot 格式开局库 (.bin)
-├── tactics/    # EPD 战术编码题库 (.epd)
-└── syzygy/     # Syzygy 残局库 (.rtbw / .rtbz)
+└── books/      # 开局库目录 (openings.json / titans.bin)
 ```
 
-### 1.1 自定义开局库 (.bin / .json)
-- **文件格式**：标准 Polyglot `.bin` 格式或外置 JSON 开局格式。
-- **配置方式**：
-  将你的开局库文件放入 `data/books/` 目录下（例如 `titans.bin` 或 `openings.json`）。系统提供了 `python3 scripts/download_assets.py` 一键初始化安装工具。
-- **降级机制**：若未放入自定义 `.bin` 文件，系统将自动使用外置或内置开源精选开局库（覆盖王兵、后兵、西西里、西班牙等主流开局）。
+### 1.1 开局库 (Lichess 开源开局库 / Polyglot)
+- **文件格式**：来自 [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) 的开源 JSON 库 (`data/books/openings.json`)，也兼容标准 Polyglot `.bin` 格式。
+- **作用**：主要用于识别当前局面的开局名称与 ECO 编码供 LLM 识别与使用，并提供推荐走法与权重。
+- **配置与更新方式**：
+  直接执行 `python3 scripts/download_assets.py` 即可自动从 Lichess 仓库拉取并构建全部 A~E 卷开局库。
 
-### 1.2 自定义战术题库 (.epd)
-- **文件格式**：标准 4 字段 EPD 格式（扩展支持 `bm`, `id`, `c0` 等操作码）。
-- **配置方式**：
-  在 `data/tactics/tactics.epd` 中添加或覆盖自定义 EPD 题库，例如：
-  ```epd
-  6k1/5ppp/8/8/8/8/1Q4PP/6K1 w - - bm Qb8#; id "mate_in_1"; c0 "底线闷杀";
-  ```
-- **程序加载**：
-  ```python
-  from src.database.tactics_db import TacticsDatabase
-  tactics_db = TacticsDatabase("data/tactics/my_puzzles.epd")
-  ```
+### 1.2 玩家历史游戏库
+- **储存标准**：只有玩家正常游玩，以将死对手、被对手将死、认输、同意求和等正常结束游戏的棋局才会存入 `data/games/`。0 步棋局或未开局棋局自动过滤。
 
-### 1.3 自定义 Syzygy 残局库 (.rtbw / .rtbz)
-- **配置方式**：将下载的 Syzygy 3-4-5-6 子残局文件放入 `data/syzygy/` 目录。
-- **自动挂载**：`EndgameDatabase` 在启动时会自动探测并挂载该目录，提供精准 WDL / DTZ 查询；若不存在则自动降级使用启发式理论残局评估器。
-
-### 1.4 一键下载与环境初始化脚本
+### 1.3 一键下载与环境初始化脚本
 项目根目录提供了自动下载与初始化的 Python 脚本：
 ```bash
 python3 scripts/download_assets.py
 ```
-该脚本会自动下载适合当前操作系统的 Stockfish 18 二进制引擎，并初始化开局库与 EPD 战术题库。
+该脚本会自动下载适合当前操作系统的 Stockfish 引擎，并下载构建 Lichess 开局库。
 
 ---
 

@@ -22,14 +22,16 @@ class PositionSnapshot:
 
 @dataclass
 class AgentTools:
-    """为 LLM 提供的外部上下文读取方法库接口 (模块5要求的方法1~4)
+    """为 LLM 提供的外部上下文与工具接口:
     
-    1. 允许 LLM 自行决定是否读取数据库
-    2. 如果允许读取数据库，读取数据库的哪一部分内容 (如: history, opening, tactics, endgame)
-    3. 允许 LLM 自行决定是否读取 Stockfish 引擎状态
-    4. 如果允许读取引擎状态，读取哪一部分内容 (如: best_move, eval_multipv)
-    5. 联网搜索工具 (web_search)
+    1. query_opening: 开局库查询候选走法及权重 (以 FEN 查开局名称/推荐走法)
+    2. query_history: 历史对局查询与归档检索 (获取玩家已归档历史对局及总结)
+    3. read_database: 统一数据库读取代理 (category="opening" 或 "history")
+    4. read_engine_state: 引擎状态读取 (best_move, analyse, eval)
+    5. web_search: 联网搜索工具 (国际象棋术语、棋理与知识检索)
     """
+    query_opening: Optional[Callable[[Optional[str], int], Dict[str, Any]]] = None
+    query_history: Optional[Callable[[int, bool], Dict[str, Any]]] = None
     read_database: Optional[Callable[[str, Dict[str, Any]], Any]] = None
     read_engine_state: Optional[Callable[[str, Dict[str, Any]], Any]] = None
     web_search: Optional[Callable[[str], str]] = None

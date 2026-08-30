@@ -93,10 +93,9 @@
 6. **模块 6: 数据库与棋局持久化**
    - 终局以“标准 PGN + LLM 对局总结”复合结构持久化至 `data/games/`。
    - 复合棋谱文件解析方法 `parse_game_file`。
-   - `OpeningBook`：支持 Polyglot (.bin) 二进制开局库与外置 JSON 开局库 (`data/books/openings.json`)。
-   - `TacticsDatabase`：支持 EPD (.epd) 战术题库标准解析与典型战术模式检索 (`data/tactics/tactics.epd`)。
-   - `EndgameDatabase`：支持 Syzygy (.rtbw/.rtbz) 残局库精准探测与纯规则启发式残局理论评估器。
-   - 统一数据库查询接口 `query_database`（提供 history / opening / tactics / endgame 统一分发）。
+   - `OpeningBook`：支持来自 Lichess 开源库 (`data/books/openings.json`) 与可选 Polyglot (.bin) 的开局名称识别及推荐走法。
+   - `HistoryStore`：保存正常结束的玩家历史棋局及 LLM 总结。
+   - 统一数据库查询接口 `query_database`（提供 history / opening 统一分发）。
    - 配套一键初始化安装脚本 `scripts/download_assets.py`。
 
 ### 💡 项目功能完成状态
@@ -166,21 +165,17 @@
   * `echo_agent.py` (`EchoAgent`): 本地回声代理，用于无 LLM API 时的开发测试与链路占位。
 
 ### 模块 6: 数据库与棋局持久化 (`src/database/`)
-* **设计原则**：面向 LLM 纯文本设计的“标准 PGN + LLM 对局总结”复合结构持久化，以及开局/战术/残局多库在 `data/` 大目录下的解耦与统一分发。
+* **设计原则**：面向 LLM 纯文本设计的“标准 PGN + LLM 对局总结”复合结构持久化，以及开局库与历史库在 `data/` 大目录下的解耦与统一分发。
 * **主要文件**：
-  * `unified_db.py` (`UnifiedDatabase`): 统一数据库聚合入口，统筹管理 `data/` 大目录下的所有子库。
+  * `unified_db.py` (`UnifiedDatabase`): 统一数据库聚合入口，统筹管理 `data/` 大目录下的子库。
   * `history_store.py` (`HistoryStore`):
     * 存储根目录 `data/games/`。
-    * 对局终局时自动以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档，并在文件末尾追加 `% --- LLM GAME SUMMARY ---` 总结区。
-    * 内置 `is_useful_game(pgn_text)` 与 `list_games(filter_useless=True)` 过滤机制，自动排除未开局即认输/求和的无用棋局。
+    * 仅在玩家正常完赛（将死、被将死、认输、协议和棋等）时以 `YYYYMMDD-HHMMSS-结果.pgn` 格式归档，并在文件末尾追加 `% --- LLM GAME SUMMARY ---` 总结区。
+    * 内置 `is_useful_game(pgn_text, result)` 与 `list_games(filter_useless=True)` 过滤机制，排除未开局即认输/求和或未完赛的无用棋局。
     * 提供 `parse_game_file(content)` 分离 PGN 与总结文本。
-    * 统筹 `OpeningBook`、`TacticsDatabase`、`EndgameDatabase`，提供统一的 `query_database(category, **kwargs)` 接口。
+    * 统筹 `OpeningBook`，提供统一的 `query_database(category, **kwargs)` 接口。
   * `opening_book.py` (`OpeningBook`):
-    * 位于 `data/books/`。支持 Polyglot 格式 (.bin) 本地开局库检索与内置开源 ECO 常用开局变例库。
-  * `tactics_db.py` (`TacticsDatabase`):
-    * 位于 `data/tactics/`。支持标准 EPD 格式解析与底线杀、双重打击、牵制等战术题库检索与 FEN 匹配。
-  * `endgame_db.py` (`EndgameDatabase`):
-    * 位于 `data/syzygy/`。支持 Syzygy Tablebases (.rtbw/.rtbz) 精准 WDL/DTZ 探测与无库时的启发式经典残局理论评估器（单后杀单王、单车杀单王、王兵残局等）。
+    * 位于 `data/books/`。基于 Lichess 开源开局库 (`data/books/openings.json`) 与 ECO 体系识别开局名称，并支持候选走法及权重推荐。
 
 ---
 
