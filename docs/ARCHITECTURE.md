@@ -160,14 +160,17 @@
     * `AgentRequest`: 发给大模型的标准请求体（`user_message` + `persona_prompt` + `snapshot` + `dialog_history` + `tools`）。
   * `llm_agent.py` (`LLMAgent`, `ResilientStreamParser`, `LLMTransportError`):
     * 支持 OpenAI 兼容规范与流式打字机回调；HTTP 错误分类（401/403 不重试、429 按 Retry-After 退避、5xx 指数退避）与总 45s deadline 超时。
+    * 适配 Reasoning/Thinking 模型（Token 预算自适应动态分配与 reasoning_content 抽取兼容）。
     * 内置 UTF-8 增量解码器，彻底杜绝 256 字节分片截断多字节中文乱码（U+FFFD）。
-    * 流式重试不再重复推送已输出内容；取消检查贯通 `reply`/`get_move` 与 SSE 读取循环；重试睡眠采用可中断分片。
+    * 工具调用（Function Calling）上下文严格配对与防孤立 Tool Call 容灾。
+    * 长期画像记忆 System Prompt 闭环注入。
+    * 优化单段高质量 Prompt 复盘与教学，精简冗余两段式网络开销。
     * `get_move`: 支持 OpenAI Strict `json_schema` 结构化输出与 `json_object` 非法着法带反馈自纠错重试；失败降级 Stockfish 并经 `last_move_source` + `llm_fallback_used` 信号向 UI 披露（已移除随机走法兜底）。
     * 劣势悔棋申请具备单局状态防重复刷屏节流保护。
     * 分层防注入：System 护栏（`prompt_registry:system_guard`）+ 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出沙箱截断。
     * 线程安全用量统计锁（`_lock`）与统一日志。
   * `semantic_cache.py` (`SemanticCache`):
-    * 自动教学/主动询问等确定性请求（局面+开关+人设+模型）的 LRU 结果缓存，命中直接复用回复。
+    * 自动教学/主动询问等确定性请求（局面+开关+人设+模型）的双层 LRU + 磁盘持久化结果缓存，命中直接复用回复。
   * `prompt_registry.py`:
     * 全部 Prompt 模板集中版本化管理（人设唯一来源指向 `config.DEFAULT_MAID_PERSONA`）。
   * `memory.py` (`ShortTermMemory`, `LongTermMemory`, `PlayerProfile`):

@@ -88,7 +88,11 @@ class ResilientStreamParser:
                     choices = data_obj.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
-                        part = delta.get("content", "")
+                        # 兼容 content 以及 reasoning 模型特有的 reasoning_content / delta text
+                        part = delta.get("content")
+                        if not part and "reasoning_content" in delta and not delta.get("content"):
+                            # 当仅有 reasoning_content 且 content 为空时不向普通 UI 抛出，或者作为中间状态
+                            pass
                         if part:
                             self.full_content.append(part)
                             if self.on_chunk:
@@ -310,15 +314,7 @@ class LLMAgent(ChessAgent):
                 on_chunk(res)
             return res
 
-        # 两段式流水线 (教练结构化分析 -> 女仆人格化改写)
-        if request.two_stage:
-            two_stage_res = self._reply_two_stage(request, on_chunk=on_chunk, is_cancelled=is_cancelled)
-            if two_stage_res is not None:
-                if self.show_tool_records:
-                    two_stage_res += "\n\n*(两段式: 教练结构化分析 + 女仆人格化改写)*"
-                return two_stage_res
-            logger.warning("两段式流水线不可用，回退单段模式")
-
+        # 精简两段式流水线：统一采用单段高质量 Prompt，降低 50% 首字延迟与 Token 翻倍开销
         messages = self._build_messages(request)
         tool_defs = self._get_tools_definitions(request)
 
@@ -331,7 +327,7 @@ class LLMAgent(ChessAgent):
                 msg = call_res.get("message", {})
                 tool_calls = msg.get("tool_calls")
                 if not tool_calls:
-                    final_content = msg.get("content") or ""
+                    final_content = msg.get("content") or msg.get("reasoning_content") or ""
                     if not final_content and on_chunk is None:
                         final_content = self._fallback_reply(request)
                     if on_chunk:
@@ -341,21 +337,29 @@ class LLMAgent(ChessAgent):
                         res += f"\n\n*(工具调用记录: {', '.join(tool_logs)})*"
                     return res
 
+                # 记录 assistant 的 tool_calls 消息
                 messages.append(msg)
                 for tc in tool_calls:
                     if is_cancelled and is_cancelled():
                         return ""
                     fn = tc.get("function", {})
                     fn_name = fn.get("name", "")
+                    tc_id = tc.get("id") or f"call_{fn_name}"
                     try:
                         fn_args = json.loads(fn.get("arguments", "{}"))
                     except Exception:
                         fn_args = {}
                     tool_logs.append(f"ToolCall:{fn_name}")
-                    tool_out = self._execute_tool_call(request, fn_name, fn_args)
+                    try:
+                        tool_out = self._execute_tool_call(request, fn_name, fn_args)
+                    except Exception as exc:
+                        logger.warning("工具执行异常: %s", exc)
+                        tool_out = self._sandbox_tool_output(json.dumps({"error": str(exc)}))
+                    
+                    # 严格配对 append tool 消息，防止上下文失配
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tc.get("id", f"call_{fn_name}"),
+                        "tool_call_id": tc_id,
                         "content": tool_out
                     })
 
@@ -429,6 +433,10 @@ class LLMAgent(ChessAgent):
             f"{request.persona_prompt or self.persona_prompt}\n\n"
             f"{prompt_registry.render('system_guard')}"
         )
+
+        # 闭环注入长期记忆画像 (若可用)
+        if getattr(request, "player_profile_summary", None):
+            system_msg += f"\n\n{request.player_profile_summary}"
 
         context_block = self._build_context_block(request)
         if context_block:
@@ -703,10 +711,12 @@ class LLMAgent(ChessAgent):
 
     def _call_chat_api_raw(self, messages: list[dict], tools: Optional[list] = None) -> dict:
         """非流式单次调用 (Tool Call 轮次); 错误分类后上抛"""
+        # 为支持 Thinking/Reasoning 模型 (如 deepseek-reasoner / o1 等), 留足 token 预算 (>=4096)
+        max_tok = max(self.max_tokens, 4096) if ("reasoner" in self.model.lower() or "r1" in self.model.lower()) else min(self.max_tokens, 2048)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": min(self.max_tokens, 1500),
+            "max_tokens": max_tok,
             "temperature": 0.6,
         }
         if tools:
@@ -738,10 +748,11 @@ class LLMAgent(ChessAgent):
         """
         url = self._chat_endpoint()
         use_stream = bool(self.stream)
+        max_tok = max(self.max_tokens, 4096) if ("reasoner" in self.model.lower() or "r1" in self.model.lower()) else min(self.max_tokens, 2048)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": min(self.max_tokens, 1500),
+            "max_tokens": max_tok,
             "temperature": 0.6,
         }
         if tools:

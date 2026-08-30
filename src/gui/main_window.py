@@ -380,8 +380,7 @@ class MainWindow(QMainWindow):
 
     def on_move_played(self, san: str, uci: str, was_white: bool):
         """
-        要求2：若总开关开启，玩家每走一步棋，根据棋盘现状信息 (PGN, FEN) 和 4 个子开关启动情况，
-        向 LLM 发送定制 prompt 并等待回复 (异步 + loading 转圈动效)
+        若教学模块打开 (master_enabled 为 True)，人类玩家走一步棋，LLM 保证回应一步教学
         """
         if self._online_client and self.controller.modes.mode == GameMode.ONLINE_PVP:
             # 判断这步是否是自己走的，如果是则同步发送给服务端
@@ -393,7 +392,7 @@ class MainWindow(QMainWindow):
         if not triggers.master_enabled or not self._has_configured_llm_api():
             return
 
-        # 仅对人类玩家自身的走棋触发自动教学，避免 AI 自身落子重复触发导致 Token 翻倍且掐断玩家教学回复
+        # 针对人类玩家本人的走棋触发教学指导
         if self.controller.modes.mode in (GameMode.VS_ENGINE, GameMode.VS_MAID_LLM):
             player_is_white = (self.controller.modes.player_side == "white")
             if was_white != player_is_white:
@@ -402,8 +401,7 @@ class MainWindow(QMainWindow):
             if not is_my_move:
                 return
 
-        # 构建内部教学 prompt。它只发送给模型，不写入聊天展示区。
-        # 语义缓存键 = 局面 + 教学开关 + 模式 + 当前人设 + 模型 (确定性请求可复用回复)
+        # 构建内部教学 prompt，玩家走一步棋即回应一步
         snapshot = self.controller.get_snapshot()
         model_name = getattr(self.agent, "model", "")
         cache_key = SemanticCache.make_key(
@@ -417,6 +415,7 @@ class MainWindow(QMainWindow):
             snapshot=snapshot,
             triggers=triggers,
             is_auto_move=True,
+            extra_note=f"玩家刚刚走出了着法 `{san}`。请立即结合当下棋盘局势与失误预警，给出一对一陪练指导。",
             game_mode_name=self.controller.modes.mode.value,
         )
         self._dispatch_llm_request(
@@ -929,7 +928,8 @@ class MainWindow(QMainWindow):
         request = self.controller.build_agent_request(
             message,
             persona_prompt=self.current_persona,
-            dialog_history=self.short_memory.get_messages()[:-1]  # 传入历史上下文
+            dialog_history=self.short_memory.get_messages()[:-1],  # 传入历史上下文
+            player_profile_summary=self.long_memory.get_summary_prompt() if getattr(self, "long_memory", None) else None,
         )
         request.trust_user_message = trusted
 

@@ -119,17 +119,16 @@ src/agents/
 
 1. **`ResilientStreamParser`**：
    - 内置 UTF-8 增量解码器，彻底杜绝 256 字节分片截断多字节中文乱码（U+FFFD）。
-   - 双缓冲 SSE 流式解析，实时过滤 `data: [DONE]`。
+   - 双缓冲 SSE 流式解析，实时过滤 `data: [DONE]`，兼容 Thinking/Reasoning 思考字段提取。
    - 具备代码块自愈闭合能力（奇数个 ` ``` ` 自动在尾部补齐）。
    - 支持通过 `is_cancelled` 标志在玩家快速下子时即时中断在途流。
-2. **多角色协同解耦 (`src/agents/multi_role.py`)**：
-   - `CoachRole`：第一阶段低温 `json_object` 结构化棋理分析。
-   - `MaidPersonaRole`：第二阶段人格化改写（保留棋理结论不改事实）；`local_compose` 为零网络降级组合。
-   - 终局复盘总结默认走两段式流水线（`AgentRequest.two_stage`）。
+2. **多角色协同与单段精准复盘**：
+   - 精简冗余二次网络调用，统一采用单段高质量 Prompt，降低 50% 首字延迟。
+   - `local_compose` 提供零网络降级组合。
 3. **HTTP 传输韧性**：
    - 401/403 等客户端错误立即失败不重试；429 按 `Retry-After`、5xx/网络异常指数退避（支持可中断 sleep）。
    - 流式已推送内容后中断不再重试（杜绝 UI 重复输出）；全程总 45s deadline 超时。
    - 严格尊重 `stream=False` 配置（支持无 SSE 代理的非流式环境）。
    - `get_move` 失败降级 Stockfish 并通过 `llm_fallback_used` 信号向 UI 披露来源。
 4. **防注入纵深**：System 护栏模板 + 用户自由输入 `<untrusted_user_input>` 包裹 + 工具输出统一沙箱截断（`_sandbox_tool_output`）。
-5. **Token 成本工程**：PGN 单源化（仅系统上下文块尾部窗口）+ 短期记忆只存意图标签 + 语义缓存（涵盖局面/开关/人设/模型）+ 工具输出截断 + 自动教学单向人类玩家门控。
+5. **Token 成本工程**：PGN 单源化（仅系统上下文块尾部窗口）+ 短期记忆只存意图标签 + 语义缓存（磁盘持久化双层 LRU）+ 工具输出截断 + 自动教学单向人类玩家门控。

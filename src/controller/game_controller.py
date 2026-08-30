@@ -777,6 +777,7 @@ class GameController(QObject):
         user_message: str,
         persona_prompt: str,
         dialog_history: Optional[List[dict]] = None,
+        player_profile_summary: Optional[str] = None,
     ) -> AgentRequest:
         """构建标准 Agent 请求。
 
@@ -800,5 +801,6 @@ class GameController(QObject):
             dialog_history=list(dialog_history or []),
             tools=tools,
             game_mode=self.modes.mode.value,
+            player_profile_summary=player_profile_summary,
         )
 

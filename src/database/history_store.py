@@ -154,11 +154,15 @@ class HistoryStore:
                 })
 
             if query:
-                # RAG-lite: 纯关键词重叠评分排序 (零第三方依赖), 召回相似历史棋局
-                terms = [t for t in query.lower().split() if len(t) >= 2]
+                # 增强轻量 RAG: 支持多关键词与 FEN 结构片段匹配评分
+                terms = [t for t in query.lower().replace(",", " ").replace(";", " ").split() if len(t) >= 2]
                 scored = []
                 for e in entries:
-                    score = sum(1 for t in terms if t in e["_text"])
+                    score = 0
+                    for t in terms:
+                        if t in e["_text"]:
+                            # 总结匹配权重大于原始PGN预览
+                            score += 3 if t in e.get("llm_summary", "").lower() else 1
                     if score > 0:
                         scored.append((score, e))
                 scored.sort(key=lambda x: (-x[0], x[1]["filename"]))

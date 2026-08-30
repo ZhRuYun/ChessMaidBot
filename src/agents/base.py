@@ -52,6 +52,8 @@ class AgentRequest:
     trust_user_message: bool = True
     # True 时启用两段式流水线: 教练结构化分析 -> 女仆人格化改写
     two_stage: bool = False
+    # 玩家长期画像摘要 (若注入)
+    player_profile_summary: Optional[str] = None
 
 
 class ChessAgent(ABC):
