@@ -96,7 +96,10 @@ class MoveHistoryPanel(QWidget):
         self.btn_next.clicked.connect(self.nav_next_requested.emit)
         self.btn_last.clicked.connect(self.nav_last_requested.emit)
 
-        layout.addLayout(nav_layout)
+        # 导航入口已移动到棋盘正下方，保留按钮与信号对象供兼容使用。
+        self.navigation_widget = QWidget(self)
+        self.navigation_widget.setLayout(nav_layout)
+        self.navigation_widget.hide()
 
     def _on_cell_clicked(self, row: int, col: int):
         if col in (1, 2):

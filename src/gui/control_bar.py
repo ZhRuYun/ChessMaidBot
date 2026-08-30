@@ -3,7 +3,8 @@
 包含模式选择、目标 Elo/难度调节、新局/悔棋/翻转/认输/求和/导出棋局状态功能
 """
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QPushButton, QLabel, QComboBox, QSpinBox, QFrame
+    QWidget, QHBoxLayout, QPushButton, QLabel, QComboBox, QSpinBox, QFrame,
+    QToolButton, QMenu
 )
 from PySide6.QtCore import Signal
 
@@ -131,6 +132,29 @@ class ControlBar(QWidget):
         # AI 设置按钮
         self.btn_llm_config = QPushButton("AI 设置")
 
+        # AI、主题、导入与导出统一收纳到最右侧设置菜单。
+        self.settings_button = QToolButton(self)
+        self.settings_button.setText("设置")
+        self.settings_button.setPopupMode(QToolButton.InstantPopup)
+        self.settings_menu = QMenu(self.settings_button)
+        action_ai = self.settings_menu.addAction("AI 设置")
+        theme_menu = self.settings_menu.addMenu("主题")
+        action_system = theme_menu.addAction("跟随系统")
+        action_light = theme_menu.addAction("浅色")
+        action_dark = theme_menu.addAction("深色")
+        self.settings_menu.addSeparator()
+        action_import = self.settings_menu.addAction("导入 PGN / FEN")
+        action_export = self.settings_menu.addAction("导出 PGN + FEN")
+        self.settings_button.setMenu(self.settings_menu)
+        self.settings_button.setStyleSheet("""
+            QToolButton { background-color: #1e293b; color: #cbd5e1; border: 1px solid #475569; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
+            QToolButton:hover { background-color: #334155; color: #ffffff; }
+            QToolButton::menu-indicator { image: none; }
+            QMenu { background-color: #1e222d; color: #e2e8f0; border: 1px solid #475569; padding: 5px; }
+            QMenu::item { padding: 7px 26px 7px 12px; }
+            QMenu::item:selected { background-color: #334155; color: #ffffff; }
+        """)
+
         # 主题切换下拉框
         theme_label = QLabel("主题:")
         theme_label.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
@@ -235,6 +259,12 @@ class ControlBar(QWidget):
         self.btn_import_state.clicked.connect(self.import_state_requested.emit)
         self.btn_export_state.clicked.connect(self.export_state_requested.emit)
         self.btn_llm_config.clicked.connect(self.llm_config_requested.emit)
+        action_ai.triggered.connect(self.llm_config_requested.emit)
+        action_import.triggered.connect(self.import_state_requested.emit)
+        action_export.triggered.connect(self.export_state_requested.emit)
+        action_system.triggered.connect(lambda: self.theme_combo.setCurrentText("跟随系统"))
+        action_light.triggered.connect(lambda: self.theme_combo.setCurrentText("浅色"))
+        action_dark.triggered.connect(lambda: self.theme_combo.setCurrentText("深色"))
 
         layout.addWidget(mode_label)
         layout.addWidget(self.mode_combo)
@@ -242,17 +272,14 @@ class ControlBar(QWidget):
         layout.addWidget(self.elo_preset_combo)
         layout.addWidget(self.elo_spin)
         layout.addWidget(sep1)
-        layout.addWidget(self.btn_new_game)
-        layout.addWidget(self.btn_undo)
-        layout.addWidget(self.btn_flip)
-        layout.addWidget(self.btn_draw)
-        layout.addWidget(self.btn_resign)
         layout.addStretch()
-        layout.addWidget(theme_label)
-        layout.addWidget(self.theme_combo)
-        layout.addWidget(self.btn_llm_config)
-        layout.addWidget(self.btn_import_state)
-        layout.addWidget(self.btn_export_state)
+        layout.addWidget(self.btn_new_game)
+        layout.addWidget(self.btn_flip)
+        layout.addWidget(self.settings_button)
+
+        # 功能控件继续作为信号与主题状态载体，但不重复占用顶部空间。
+        for widget in (self.btn_undo, self.btn_draw, self.btn_resign, theme_label, self.theme_combo, self.btn_llm_config, self.btn_import_state, self.btn_export_state):
+            widget.hide()
 
         self._update_elo_visibility(self.mode_combo.currentText())
 

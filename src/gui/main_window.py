@@ -6,9 +6,9 @@
 from typing import Optional
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QFrame,
-    QLabel, QMessageBox, QApplication, QInputDialog
+    QLabel, QPushButton, QMessageBox, QApplication, QInputDialog
 )
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QThread, Signal, Qt, QEvent
 import chess
 
 from ..agents.base import ChessAgent, AgentRequest
@@ -113,8 +113,14 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(16, 9, 16, 14)
         main_layout.setSpacing(8)
 
-        # 1. 顶部控制栏 (现代极简风格)
-        self.control_bar = ControlBar(self)
+        # 1. 固定高度的顶部区域：控制栏与横线到窗口顶部的距离不受其他布局影响。
+        top_region = QWidget(self)
+        top_region.setFixedHeight(54)
+        top_layout = QVBoxLayout(top_region)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(2)
+
+        self.control_bar = ControlBar(top_region)
         self.control_bar.new_game_requested.connect(self.on_new_game)
         self.control_bar.undo_requested.connect(self.on_undo)
         self.control_bar.flip_requested.connect(self.on_flip)
@@ -126,15 +132,16 @@ class MainWindow(QMainWindow):
         self.control_bar.mode_changed.connect(self.controller.set_mode_label)
         self.control_bar.elo_changed.connect(self.controller.set_engine_elo)
         self.control_bar.theme_changed.connect(self.on_theme_changed)
-        main_layout.addWidget(self.control_bar)
+        top_layout.addWidget(self.control_bar, stretch=1)
 
         # 固定横向边界：约束顶部控制栏与三栏工作区，不参与拖拽。
-        toolbar_boundary = QFrame(self)
-        toolbar_boundary.setObjectName("toolbarBoundary")
-        toolbar_boundary.setFixedHeight(2)
-        toolbar_boundary.setFrameShape(QFrame.HLine)
-        toolbar_boundary.setStyleSheet("background-color: #334155; border: none;")
-        main_layout.addWidget(toolbar_boundary)
+        self.toolbar_boundary = QFrame(top_region)
+        self.toolbar_boundary.setObjectName("toolbarBoundary")
+        self.toolbar_boundary.setFixedHeight(2)
+        self.toolbar_boundary.setFrameShape(QFrame.HLine)
+        self.toolbar_boundary.setStyleSheet("background-color: #334155; border: none;")
+        top_layout.addWidget(self.toolbar_boundary)
+        main_layout.addWidget(top_region)
 
         # 2. 中间核心区：使用 QSplitter 提供两条可拖拽竖向分隔线。
         self.content_splitter = QSplitter(Qt.Horizontal, self)
@@ -171,20 +178,64 @@ class MainWindow(QMainWindow):
         self.content_splitter.addWidget(history_widget)
 
         # [中央]：棋盘区域 + 行动与将军状态指示
-        board_widget = QWidget(self.content_splitter)
-        board_container = QVBoxLayout(board_widget)
-        board_container.setContentsMargins(8, 0, 8, 0)
-        board_container.setAlignment(Qt.AlignCenter)
+        self.board_workspace = QWidget(self.content_splitter)
+        self.board_container = QVBoxLayout(self.board_workspace)
+        self.board_container.setContentsMargins(8, 0, 8, 0)
+        self.board_container.setSpacing(8)
         self.status_bar_label = QLabel("当前行动: 白方 (White)")
         self.status_bar_label.setAlignment(Qt.AlignCenter)
         self.status_bar_label.setStyleSheet("color: #38bdf8; font-size: 14px; font-weight: 700; padding: 4px;")
-        board_container.addWidget(self.status_bar_label)
+        self.board_container.addWidget(self.status_bar_label)
 
-        self.chess_board = ChessBoardWidget(self.controller.board_state, board_widget)
+        self.chess_board = ChessBoardWidget(self.controller.board_state, self.board_workspace)
         self.chess_board.move_ready.connect(self.controller.apply_move)
-        board_container.addWidget(self.chess_board, alignment=Qt.AlignCenter)
-        board_widget.setMinimumWidth(self.chess_board.minimumSizeHint().width() + 16)
-        self.content_splitter.addWidget(board_widget)
+
+        # 棋盘与右侧竖排动作按钮同处一行，顶端对齐。
+        self.board_row_widget = QWidget(self.board_workspace)
+        board_row = QHBoxLayout(self.board_row_widget)
+        board_row.setContentsMargins(0, 0, 0, 0)
+        board_row.setSpacing(8)
+        board_row.addWidget(self.chess_board, alignment=Qt.AlignTop)
+
+        action_widget = QWidget(self.board_row_widget)
+        action_column = QVBoxLayout(action_widget)
+        action_column.setContentsMargins(0, 0, 0, 0)
+        action_column.setSpacing(8)
+        for text, handler, destructive in (
+            ("悔棋", self.on_undo, False),
+            ("求和", self.on_draw, False),
+            ("认输", self.on_resign, True),
+        ):
+            button = QPushButton(text, action_widget)
+            button.setFixedWidth(62)
+            if destructive:
+                button.setStyleSheet("QPushButton { background-color: #31181e; color: #fca5a5; border: 1px solid #5c242e; border-radius: 6px; padding: 6px 10px; } QPushButton:hover { background-color: #451d27; color: white; border-color: #ef4444; }")
+            else:
+                button.setStyleSheet("QPushButton { background-color: #1e222d; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; } QPushButton:hover { background-color: #282f3e; color: white; border-color: #60a5fa; }")
+            button.clicked.connect(handler)
+            action_column.addWidget(button)
+        board_row.addWidget(action_widget, alignment=Qt.AlignTop)
+        self.board_container.addWidget(self.board_row_widget, alignment=Qt.AlignTop | Qt.AlignHCenter)
+
+        # 走法导航按钮位于棋盘正下方，宽度与棋盘同步。
+        self.nav_widget = QWidget(self.board_workspace)
+        nav_layout = QHBoxLayout(self.nav_widget)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(4)
+        nav_style = "QPushButton { background-color: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 4px; font-weight: bold; padding: 4px 18px; } QPushButton:hover { border-color: #38bdf8; color: white; }"
+        for text, handler in (("|<", self.on_nav_first), ("<", self.on_nav_prev), (">", self.on_nav_next), (">|", self.on_nav_last)):
+            button = QPushButton(text, self.nav_widget)
+            button.setFixedHeight(28)
+            button.setStyleSheet(nav_style)
+            button.clicked.connect(handler)
+            nav_layout.addWidget(button)
+        self.nav_widget.setFixedWidth(self.chess_board.width())
+        self.board_container.addWidget(self.nav_widget, alignment=Qt.AlignTop | Qt.AlignHCenter)
+
+        self.board_workspace.setMinimumWidth(ChessBoardWidget.MIN_SQUARE_SIZE * 8 + 90)
+        self.content_splitter.addWidget(self.board_workspace)
+        # 中央区域尺寸变化时自适应缩放棋盘。
+        self.board_workspace.installEventFilter(self)
 
         # [右侧]：LLM 女仆互动对话窗口
         self.chat_panel = ChatPanel(self.controller.teaching, self.content_splitter)
@@ -200,6 +251,32 @@ class MainWindow(QMainWindow):
         self.content_splitter.setStretchFactor(2, 1)
         self.content_splitter.setSizes([240, 560, 440])
         main_layout.addWidget(self.content_splitter, stretch=1)
+
+    def eventFilter(self, obj, event):
+        """中央区域尺寸变化时，按可用空间自适应缩放棋盘。"""
+        if obj is self.board_workspace and event.type() == QEvent.Resize:
+            self._adjust_board_size()
+        return super().eventFilter(obj, event)
+
+    def _adjust_board_size(self):
+        """棋盘随中间区域扩大而适当变大，但绝不超出上下可用边界。"""
+        spacing = self.board_container.spacing() or 0
+        margins = self.board_container.contentsMargins()
+        reserved_height = (
+            self.status_bar_label.sizeHint().height()
+            + self.nav_widget.sizeHint().height()
+            + spacing * 2
+        )
+        available_height = self.board_workspace.height() - reserved_height
+        available_width = (
+            self.board_workspace.width()
+            - margins.left() - margins.right()
+            - 62 - 8  # 右侧动作按钮列宽及其与棋盘的间距
+        )
+        self.chess_board.set_board_pixel_size(
+            max(min(available_width, available_height), 0)
+        )
+        self.nav_widget.setFixedWidth(self.chess_board.width())
 
     def connect_controller(self):
         ctrl = self.controller
