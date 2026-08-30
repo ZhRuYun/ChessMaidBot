@@ -340,6 +340,15 @@ class LLMConfigDialog(QDialog):
         btn_new_tpl.clicked.connect(self._on_create_new_template)
         preset_row.addWidget(btn_new_tpl)
 
+        btn_del_tpl = QPushButton("🗑 删除模板")
+        btn_del_tpl.setStyleSheet(
+            "background-color: #ef4444; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
+            if self._is_light else
+            "background-color: #dc2626; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
+        )
+        btn_del_tpl.clicked.connect(self._on_delete_template)
+        preset_row.addWidget(btn_del_tpl)
+
         persona_layout.addLayout(preset_row)
 
         self.persona_edit = QPlainTextEdit(persona)
@@ -477,6 +486,32 @@ class LLMConfigDialog(QDialog):
         self._refresh_persona_combo()
         self.persona_combo.setCurrentIndex(len(self.custom_templates) - 1)
         self.persona_edit.setPlainText(prompt.strip())
+
+    def _on_delete_template(self):
+        """删除当前选中的自定义人设模板 (默认模板不可删除)"""
+        idx = self.persona_combo.currentIndex()
+        if not (0 <= idx < len(self.custom_templates)):
+            return
+        tpl_name = self.custom_templates[idx][0]
+        if tpl_name == "ChessMaid 默认女仆" or idx == 0:
+            QMessageBox.warning(self, "提示", "系统内置的【ChessMaid 默认女仆】模板不可删除。")
+            return
+
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除自定义人设模板【{tpl_name}】吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.custom_templates.pop(idx)
+        self._refresh_persona_combo()
+        new_idx = max(0, idx - 1)
+        self.persona_combo.setCurrentIndex(new_idx)
+        if self.custom_templates:
+            self.persona_edit.setPlainText(self.custom_templates[new_idx][2])
 
     def _on_save_as_template(self):
         """将当前编辑框的人设保存为新模板"""

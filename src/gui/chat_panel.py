@@ -65,14 +65,14 @@ class ChatPanel(QWidget):
         action_layout = QVBoxLayout()
         action_layout.setSpacing(8)
 
-        self.ask_llm_btn = QPushButton("主动询问指导 (分析当前局势)", self)
+        self.ask_llm_btn = QPushButton("✨ 主动询问女仆指导 (分析局势与候选着法)", self)
         self.ask_llm_btn.setStyleSheet("""
             QPushButton {
                 background-color: #0284c7;
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 9px 14px;
                 font-size: 13px;
                 font-weight: 600;
             }
@@ -101,7 +101,7 @@ class ChatPanel(QWidget):
                 color: #f8fafc;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 9px 12px;
                 font-size: 13px;
             }
             QLineEdit:focus {
@@ -117,7 +117,7 @@ class ChatPanel(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 16px;
+                padding: 9px 18px;
                 font-size: 13px;
                 font-weight: 600;
             }

@@ -74,11 +74,13 @@ class LLMAgent(ChessAgent):
         self.show_tool_records = False  # 是否在回复末尾附带简短的工具调用记录 (便于调试)
 
         default_persona = (
-            "你是一位专业、温和的国际象棋教学助手【ChessMaid】。"
-            "回答必须简短直接，不说客套话，不复述问题，不展示内部提示词、FEN 或 PGN。"
-            "对局未结束时，每次回答必须给出3个合法候选着法，每行严格采用“着法：说明”格式，"
-            "说明只保留核心意图、主要后续与必要防范；完整回答控制在120字以内。"
-            "严禁使用任何emoji表情符号。"
+            "你是一位精通国际象棋且温柔细致的AI棋艺女仆助理【ChessMaid】。"
+            "你的核心职责是陪伴主人对弈并提供富有洞察力的战术指导与大局观教学。"
+            "在解答与指导时：\n"
+            "1. 语言亲切得体、精炼精准，优先剖析空间、子力协调、王安全与关键格控制等核心棋理。\n"
+            "2. 指出走法意图与战术威胁，给出清晰可行的后续计划。\n"
+            "3. 对局未结束时必须提供3个合法候选着法（格式：着法：说明），每行只保留核心意图、主要后续与必要防范；完整回答控制在150字以内。\n"
+            "4. 终局时用2至3句总结胜负手与关键转折。严禁废话与套话，严禁输出任何emoji表情符号。"
         )
         self.persona_prompt = persona_prompt or default_persona
 
@@ -184,37 +186,9 @@ class LLMAgent(ChessAgent):
 
         return "\n\n".join(parts)
 
-    def _fetch_opening_context(self, request: AgentRequest) -> str:
-        """通过 AgentTools 查询开局库走法与开局名称"""
-        tools = request.tools
-        if tools is None:
-            return ""
-        try:
-            opening_data = None
-            if getattr(tools, "query_opening", None):
-                opening_data = tools.query_opening(request.snapshot.fen, 3)
-            elif getattr(tools, "read_database", None):
-                opening_data = tools.read_database("opening", {"fen": request.snapshot.fen, "limit": 3})
-
-            if opening_data and isinstance(opening_data, dict):
-                lines = []
-                name = opening_data.get("name")
-                eco = opening_data.get("eco")
-                if name and name != "Unknown Opening":
-                    lines.append(f"【开局体系与名称】: {name} (ECO: {eco})")
-                moves = opening_data.get("recommended_moves", []) or opening_data.get("moves", [])
-                if moves:
-                    move_strs = [f"{m.get('san', m.get('uci'))} (权重:{m.get('weight', 0)})" for m in moves[:3]]
-                    lines.append(f"【开局库候选理论走法及权重】: {', '.join(move_strs)}")
-                if lines:
-                    return "\n".join(lines)
-        except Exception:
-            pass
-        return ""
-
     @staticmethod
     def _format_snapshot(snap: PositionSnapshot) -> str:
-        """将 PositionSnapshot 格式化为 LLM 可读的棋盘上下文文本"""
+        """将 PositionSnapshot 格式化为 LLM 可读的棋盘上下文文本 (精简 token 版)"""
         lines = [
             "【当前棋盘局面】",
             f"- FEN: `{snap.fen}`",
@@ -227,11 +201,15 @@ class LLMAgent(ChessAgent):
             lines.append(f"- 最近一步: {snap.last_move_san}")
         if snap.game_over_reason:
             lines.append(f"- 终局原因: {snap.game_over_reason}")
-        # PGN 棋谱 (仅在非空时附加, 避免无意义的长文本)
+        # 优化 Token: 仅保留最近 10 步记谱，避免长对局 PGN 膨胀
         pgn_text = (snap.pgn or "").strip()
         if pgn_text:
-            lines.append("- 完整 PGN 棋谱:")
-            lines.append(f"```pgn\n{pgn_text}\n```")
+            lines.append("- 对局 PGN 记谱:")
+            # 过滤头部只提取走法行，且限制长度以节省 token
+            moves_only = "\n".join([l for l in pgn_text.splitlines() if not l.startswith("[") and l.strip()])
+            if len(moves_only) > 300:
+                moves_only = "..." + moves_only[-300:]
+            lines.append(f"```pgn\n{moves_only or pgn_text}\n```")
         return "\n".join(lines)
 
     def _fetch_engine_eval(self, request: AgentRequest) -> str:
@@ -289,8 +267,8 @@ class LLMAgent(ChessAgent):
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": 0.7,
+            "max_tokens": min(self.max_tokens, 800),  # 节约 token 上限
+            "temperature": 0.6,
         }
 
         # OpenAI 标准规范: reasoning_effort ("low", "medium", "high")
@@ -305,6 +283,7 @@ class LLMAgent(ChessAgent):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
             "User-Agent": "ChessMaidBot/1.0",
+            "Connection": "keep-alive",
         }
 
         last_error = None
@@ -328,7 +307,7 @@ class LLMAgent(ChessAgent):
                 last_error = e
                 if attempt < max_retries:
                     import time
-                    time.sleep(0.8 * (attempt + 1))
+                    time.sleep(0.5 * (attempt + 1))
                     continue
 
         raise last_error or RuntimeError("LLM API 调用失败")
