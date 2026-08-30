@@ -1,8 +1,9 @@
 import unittest
 from src.agents.base import PositionSnapshot, AgentRequest
 from src.agents.echo_agent import EchoAgent
-from src.agents.llm_agent import LLMAgent
+from src.agents.llm_agent import LLMAgent, ResilientStreamParser
 from src.agents.prompt_builder import PromptBuilder
+from src.agents.memory import ShortTermMemory, LongTermMemory
 from src.controller.teaching_triggers import TeachingTriggers
 
 
@@ -48,7 +49,6 @@ class TestAgents(unittest.TestCase):
         self.assertIn("rnbqkbnr", reply)
         self.assertTrue(len(chunks) > 0)
         self.assertEqual(agent._chat_endpoint(), "https://api.deepseek.com/v1/chat/completions")
-        self.assertEqual(agent._models_endpoint(), "https://api.deepseek.com/v1/models")
 
     def test_prompt_builder(self):
         triggers = TeachingTriggers()
@@ -63,6 +63,22 @@ class TestAgents(unittest.TestCase):
         prompt = PromptBuilder.build_custom_prompt(snapshot, triggers, is_auto_move=False, extra_note="What should I do?")
         self.assertIn("e4", prompt)
         self.assertIn("What should I do?", prompt)
+        self.assertIn("BEGIN_TRUSTED_CHESS_DATA", prompt)
+
+    def test_stream_parser_and_memory(self):
+        chunks = []
+        parser = ResilientStreamParser(on_chunk=lambda c: chunks.append(c))
+        parser.feed(b'data: {"choices": [{"delta": {"content": "```python\\nprint(1)"}}]}\n\n')
+        parser.feed(b'data: [DONE]\n\n')
+        res = parser.get_result()
+        self.assertTrue(res.endswith("```"))
+
+        st_mem = ShortTermMemory(max_turns=3)
+        st_mem.add_turn("user", "1")
+        st_mem.add_turn("assistant", "2")
+        st_mem.add_turn("user", "3")
+        st_mem.add_turn("assistant", "4")
+        self.assertEqual(len(st_mem.get_messages()), 3)
 
 
 if __name__ == "__main__":

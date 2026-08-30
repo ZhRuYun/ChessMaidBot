@@ -15,6 +15,7 @@ import json
 from ..agents.base import ChessAgent, AgentRequest
 from ..agents.llm_agent import LLMAgent
 from ..agents.prompt_builder import PromptBuilder
+from ..agents.memory import ShortTermMemory, LongTermMemory
 from ..config import DEFAULT_MAID_PERSONA, CONFIG_FILE_PATH
 from ..controller.game_controller import GameController
 from ..controller.game_modes import GameMode
@@ -26,7 +27,7 @@ from .control_bar import ControlBar
 
 
 class LLMWorker(QThread):
-    """异步执行 LLM 请求的后台线程，支持流式逐字输出与 loading spinner"""
+    """异步执行 LLM 请求的后台线程，支持流式逐字输出与取消控制"""
     chunk_ready = Signal(str, int)     # (流式片段文本, 代际号)
     response_ready = Signal(str, int)  # (完整回复文本, 代际号)
     failed = Signal(str, int)          # (错误信息, 代际号)
@@ -36,16 +37,30 @@ class LLMWorker(QThread):
         self.agent = agent
         self.request = request
         self.generation = generation
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
         try:
             def _on_chunk(chunk: str):
-                self.chunk_ready.emit(chunk, self.generation)
+                if not self._is_cancelled:
+                    self.chunk_ready.emit(chunk, self.generation)
 
-            reply = self.agent.reply(self.request, on_chunk=_on_chunk)
-            self.response_ready.emit(reply, self.generation)
+            def _check_cancelled() -> bool:
+                return self._is_cancelled
+
+            if hasattr(self.agent, "reply") and "is_cancelled" in self.agent.reply.__code__.co_varnames:
+                reply = self.agent.reply(self.request, on_chunk=_on_chunk, is_cancelled=_check_cancelled)
+            else:
+                reply = self.agent.reply(self.request, on_chunk=_on_chunk)
+
+            if not self._is_cancelled:
+                self.response_ready.emit(reply, self.generation)
         except Exception as e:
-            self.failed.emit(str(e), self.generation)
+            if not self._is_cancelled:
+                self.failed.emit(str(e), self.generation)
 
 
 class MainWindow(QMainWindow):
@@ -78,6 +93,9 @@ class MainWindow(QMainWindow):
         """)
 
         self.controller = controller or GameController()
+        # 双层记忆系统
+        self.short_memory = ShortTermMemory(max_turns=12)
+        self.long_memory = LongTermMemory()
         # 加载持久化配置
         self._persisted_config = self._load_persisted_settings()
         # 当前生效的人设 Prompt (可被用户通过「人设」按钮运行时修改)
@@ -260,11 +278,12 @@ class MainWindow(QMainWindow):
             snapshot=snapshot,
             triggers=self.controller.teaching,
             is_auto_move=False,
-            extra_note=f"本局已终局，请为对局归档提供精准全面的 Coach 战术复盘总结。{blunder_summary}",
+            extra_note=f"本局已终局，请为对局归档提供精准全面的 Coach 战术复盘总结。{blunder_summary}\n{self.long_memory.get_summary_prompt()}",
         )
         req = self.controller.build_agent_request(
             user_message=custom_prompt,
             persona_prompt=self.current_persona,
+            dialog_history=self.short_memory.get_messages(),
         )
         return self.agent.reply(req)
 
@@ -337,10 +356,13 @@ class MainWindow(QMainWindow):
     def on_game_over(self, status: dict):
         result = status.get("result", "*")
         reason = status.get("reason", "")
+        # 更新长期记忆画像
+        self.long_memory.record_game_result(result=result)
         self.chat_panel.append_maid_message(f"**对局结束！**<br>结果: `{result}` - {reason}")
         QMessageBox.information(self, "对局结束", f"结果: {result}\n原因: {reason}")
 
     def on_game_reset(self):
+        self.short_memory.clear()
         self.chess_board.reset_view()
 
     # ---------- 走法导航动作 (Lichess 风格) ----------
@@ -773,11 +795,22 @@ class MainWindow(QMainWindow):
 
     def _dispatch_llm_request(self, message: str):
         """异步调度 LLM 请求，展示 Loading 旋转控件与逐字打字机流式渲染"""
+        # 取消上一个在途的 LLM 线程
+        if self._llm_thread is not None and self._llm_thread.isRunning():
+            self._llm_thread.cancel()
+
         self._llm_generation += 1
         generation = self._llm_generation
 
         self.chat_panel.set_loading(True)
-        request = self.controller.build_agent_request(message, persona_prompt=self.current_persona)
+        # 记录用户提问到短期工作记忆
+        self.short_memory.add_turn(role="user", content=message, fen=self.controller.get_fen())
+
+        request = self.controller.build_agent_request(
+            message,
+            persona_prompt=self.current_persona,
+            dialog_history=self.short_memory.get_messages()[:-1]  # 传入历史上下文
+        )
 
         self._llm_thread = LLMWorker(self.agent, request, generation=generation, parent=self)
         self._llm_thread.chunk_ready.connect(self._on_llm_chunk)
@@ -795,6 +828,9 @@ class MainWindow(QMainWindow):
             return  # 过期回复, 丢弃
         self.chat_panel.set_loading(False)
         self.chat_panel.finalize_maid_stream(reply)
+        # 记录女仆回复到短期记忆
+        if reply:
+            self.short_memory.add_turn(role="assistant", content=reply, fen=self.controller.get_fen())
 
     def _on_llm_failed(self, error_msg: str, generation: int):
         if generation != self._llm_generation:

@@ -710,7 +710,12 @@ class GameController(QObject):
             return True
         return False
 
-    def build_agent_request(self, user_message: str, persona_prompt: str) -> AgentRequest:
+    def build_agent_request(
+        self,
+        user_message: str,
+        persona_prompt: str,
+        dialog_history: Optional[List[dict]] = None,
+    ) -> AgentRequest:
         tools = AgentTools(
             query_opening=self._agent_query_opening,
             query_history=self._agent_query_history,
@@ -723,6 +728,7 @@ class GameController(QObject):
             user_message=user_message,
             persona_prompt=persona_prompt,
             snapshot=self.get_snapshot(),
+            dialog_history=list(dialog_history or []),
             tools=tools,
             game_mode=self.modes.mode.value,
         )

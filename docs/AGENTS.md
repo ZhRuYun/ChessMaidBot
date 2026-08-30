@@ -118,11 +118,16 @@ src/agents/
 
 ---
 
-## 6. 女仆陪练对弈机制 (VS_MAID_LLM)
+## 7. 增强架构特性 (v2.0)
 
-当对弈模式切换为 **女仆陪练 (vs Maid LLM)** 时：
-1. `GameController` 异步调度 `EngineWorker(is_maid_llm=True)`。
-2. Worker 调用 `LLMAgent.get_move(request)`。
-3. Agent 向 LLM 发起精准单步走法请求（要求返回纯 UCI 格式着法如 `e7e5`）。
-4. 解析成功后返回 UCI 着法；若 LLM 离线或解析异常，自动通过开局库/引擎/合法走法降级，确保对局永不卡顿。
+1. **结构化走法决策 (Structured Outputs)**:
+   - `LLMAgent.get_move` 采用 `response_format={"type": "json_object"}` 结合 Schema 校验，杜绝正则误捕获与思考模型解析失败。
+2. **双层记忆系统 (Dual-layer Memory)**:
+   - `ShortTermMemory`: 维护最近对局滑动窗口对话历史 (`dialog_history`)。
+   - `LongTermMemory`: 持久化玩家对局统计、偏好开局与高频失误类型。
+3. **HTTP 弹性传输与流式自愈 (Resilient Streaming)**:
+   - `ResilientStreamParser`: 支持 SSE 字节流自愈闭合 Markdown 代码块，支持请求主动取消。
+4. **Prompt 防御与去冗余**:
+   - 添加 `<!-- BEGIN_TRUSTED_CHESS_DATA -->` 隔离护栏；去除 System 前置重复工具抓取，由 Tool Call 按需动态调用。
+
 
