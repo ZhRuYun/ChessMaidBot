@@ -10,12 +10,13 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
     QDialogButtonBox, QLabel, QCheckBox, QComboBox,
-    QTabWidget, QWidget, QPlainTextEdit, QGroupBox, QPushButton, QHBoxLayout
+    QTabWidget, QWidget, QPlainTextEdit, QGroupBox, QPushButton, QHBoxLayout, QMessageBox
 )
 
 from .persona_config_dialog import PERSONA_PRESETS
 from ..controller.teaching_triggers import TeachingTriggers
 from ..config import DEFAULT_MAID_PERSONA
+from ..agents.llm_agent import LLMAgent
 
 
 class LLMConfigDialog(QDialog):
@@ -209,7 +210,26 @@ class LLMConfigDialog(QDialog):
 
         self.model_input = QLineEdit(current.get("model", ""))
         self.model_input.setPlaceholderText("例如: deepseek-chat, gpt-4o")
-        form.addRow("模型名称 (Model):", self.model_input)
+
+        # 模型选择与拉取行
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.model_input, stretch=1)
+        self.btn_test_fetch = QPushButton("测试连接并拉取模型")
+        self.btn_test_fetch.setStyleSheet(
+            "background-color: #0284c7; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
+            if is_light else
+            "background-color: #2563eb; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;"
+        )
+        self.btn_test_fetch.clicked.connect(self._on_test_fetch_models)
+        model_row.addWidget(self.btn_test_fetch)
+
+        # 远端拉取后的模型下拉选择
+        self.remote_models_combo = QComboBox()
+        self.remote_models_combo.setVisible(False)
+        self.remote_models_combo.currentTextChanged.connect(self._on_remote_model_picked)
+        model_row.addWidget(self.remote_models_combo)
+
+        form.addRow("模型名称 (Model):", model_row)
 
         self.search_url_input = QLineEdit(current.get("search_api_url", ""))
         self.search_url_input.setPlaceholderText("可选: https://api.tavily.com/search (留空免key)")
@@ -225,6 +245,7 @@ class LLMConfigDialog(QDialog):
         self.reasoning_combo.addItem("低 (low)", "low")
         self.reasoning_combo.addItem("中 (medium)", "medium")
         self.reasoning_combo.addItem("高 (high)", "high")
+        self.reasoning_combo.addItem("最大 (max)", "max")
         self.reasoning_combo.addItem("关闭思考 (none)", "none")
         current_effort = str(current.get("reasoning_effort", "auto")).lower()
         for i in range(self.reasoning_combo.count()):
@@ -316,6 +337,48 @@ class LLMConfigDialog(QDialog):
     def _toggle_key_visibility(self, checked: bool):
         """切换 API Key 明文/密文显示"""
         self.key_input.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+
+    def _on_test_fetch_models(self):
+        """测试连接并拉取模型列表"""
+        api_base = self.base_input.text().strip() or "https://api.deepseek.com"
+        api_key = self.key_input.text().strip()
+
+        self.btn_test_fetch.setEnabled(False)
+        self.btn_test_fetch.setText("测试中...")
+        try:
+            models = LLMAgent.test_connection_and_fetch_models(api_base, api_key, timeout=8)
+            if models:
+                self.remote_models_combo.blockSignals(True)
+                self.remote_models_combo.clear()
+                self.remote_models_combo.addItem("-- 选择拉取到的模型 --")
+                for m in models:
+                    self.remote_models_combo.addItem(m)
+                self.remote_models_combo.blockSignals(False)
+                self.remote_models_combo.setVisible(True)
+                QMessageBox.information(
+                    self,
+                    "连接成功",
+                    f"成功连接至 API 接口！共获取到 {len(models)} 个模型。\n您可在右侧下拉框中直接选择，或继续手动输入。"
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "连接成功",
+                    "成功连通 API 服务，但接口返回的模型列表为空。您可以直接在输入框填写模型名称。"
+                )
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "连接失败",
+                f"未能连通 API 接口或拉取模型失败：\n\n{e}\n\n请检查 Base URL、API Key 或网络连接。"
+            )
+        finally:
+            self.btn_test_fetch.setEnabled(True)
+            self.btn_test_fetch.setText("测试连接并拉取模型")
+
+    def _on_remote_model_picked(self, text: str):
+        if text and not text.startswith("--"):
+            self.model_input.setText(text)
 
     def _on_preset_selected(self, index: int):
         if 0 <= index < len(PERSONA_PRESETS):

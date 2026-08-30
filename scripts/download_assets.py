@@ -42,42 +42,55 @@ def setup_stockfish():
     current_os = platform.system()
     dest_binary = ENGINES_DIR / ("stockfish.exe" if current_os == "Windows" else "stockfish")
     
-    if dest_binary.exists():
-        print(f"[OK] Stockfish 引擎已存在: {dest_binary}")
-        return
+    # 检查是否已存在且为有效可执行文件
+    if dest_binary.exists() and dest_binary.stat().st_size > 1000000:
+        if current_os != "Windows":
+            os.chmod(dest_binary, 0o755)
+        print(f"[OK] Stockfish 引擎已就绪: {dest_binary}")
+        return True
 
     url = STOCKFISH_DOWNLOAD_URLS.get(current_os)
     if not url:
         print(f"[WARN] 未找到适用于操作系统 {current_os} 的预设 Stockfish 下载链接，请手动下载放置于 engines/stockfish")
-        return
+        return False
 
     archive_path = ENGINES_DIR / ("sf_download.zip" if current_os == "Windows" else "sf_download.tar")
     try:
         download_file(url, archive_path)
         if current_os == "Windows":
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                for file_info in zip_ref.infolist():
-                    if file_info.filename.endswith(".exe"):
-                        file_info.filename = "stockfish.exe"
-                        zip_ref.extract(file_info, ENGINES_DIR)
+                for member in zip_ref.namelist():
+                    if member.lower().endswith(".exe") and "stockfish" in member.lower():
+                        source = zip_ref.open(member)
+                        with open(dest_binary, "wb") as target:
+                            shutil.copyfileobj(source, target)
                         break
         else:
             with tarfile.open(archive_path, 'r') as tar_ref:
                 for member in tar_ref.getmembers():
-                    if "stockfish" in member.name and not member.isdir():
+                    if "stockfish" in member.name.lower() and not member.isdir():
                         extracted = tar_ref.extractfile(member)
-                        with open(dest_binary, "wb") as f:
-                            f.write(extracted.read())
-                        break
-            os.chmod(dest_binary, 0o755)
+                        if extracted:
+                            with open(dest_binary, "wb") as f:
+                                shutil.copyfileobj(extracted, f)
+                            break
+            if dest_binary.exists():
+                os.chmod(dest_binary, 0o755)
 
         if archive_path.exists():
             archive_path.unlink()
-        print(f"[SUCCESS] Stockfish 安装就绪: {dest_binary}")
+
+        if dest_binary.exists() and dest_binary.stat().st_size > 100000:
+            print(f"[SUCCESS] Stockfish 安装就绪: {dest_binary}")
+            return True
+        else:
+            print(f"[ERROR] Stockfish 提取后文件异常或缺失: {dest_binary}")
+            return False
     except Exception as e:
         print(f"[ERROR] 下载或解压 Stockfish 失败: {e}")
         if archive_path.exists():
             archive_path.unlink()
+        return False
 
 
 def setup_databases():
@@ -85,23 +98,38 @@ def setup_databases():
     TACTICS_DIR.mkdir(parents=True, exist_ok=True)
     SYZYGY_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 导出默认 openings.json 与 tactics.epd
+    # 导出并完善 openings.json 与 tactics.epd
     from src.database.opening_book import DEFAULT_OPENING_PATTERNS
     from src.database.tactics_db import DEFAULT_EPD_TACTICS
     import json
 
     openings_file = BOOKS_DIR / "openings.json"
-    if not openings_file.exists():
+    if not openings_file.exists() or openings_file.stat().st_size < 100:
         with open(openings_file, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_OPENING_PATTERNS, f, ensure_ascii=False, indent=2)
-        print(f"[OK] 已生成开局库文件: {openings_file}")
+        print(f"[OK] 已生成/更新开局库文件: {openings_file}")
+    else:
+        print(f"[OK] 开局库文件完备: {openings_file}")
 
     tactics_file = TACTICS_DIR / "tactics.epd"
-    if not tactics_file.exists():
+    if not tactics_file.exists() or tactics_file.stat().st_size < 50:
         with open(tactics_file, "w", encoding="utf-8") as f:
             for line in DEFAULT_EPD_TACTICS:
                 f.write(line + "\n")
-        print(f"[OK] 已生成战术题库文件: {tactics_file}")
+        print(f"[OK] 已生成/更新战术题库文件: {tactics_file}")
+    else:
+        print(f"[OK] 战术题库文件完备: {tactics_file}")
+
+    # Syzygy 残局库说明与目录就绪提示
+    readme_syzygy = SYZYGY_DIR / "README.txt"
+    if not readme_syzygy.exists():
+        with open(readme_syzygy, "w", encoding="utf-8") as f:
+            f.write(
+                "Syzygy Tablebases 残局库目录\n"
+                "如需使用 3-4-5-6 子 Syzygy 残局库，请将 .rtbw 与 .rtbz 文件放入此目录。\n"
+                "系统会自动识别并无缝挂载；若无文件则自动启用内置理论残局启发式评估器。\n"
+            )
+    return True
 
 
 def main():

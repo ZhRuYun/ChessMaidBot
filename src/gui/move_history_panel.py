@@ -153,6 +153,27 @@ class MoveHistoryPanel(QWidget):
                     font-weight: 700;
                 }
             """)
+            btn_style = """
+                QPushButton {
+                    background-color: #f1f5f9;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 13px;
+                    padding: 4px 0px;
+                }
+                QPushButton:hover {
+                    background-color: #e2e8f0;
+                    color: #0f172a;
+                    border-color: #0284c7;
+                }
+                QPushButton:pressed {
+                    background-color: #cbd5e1;
+                }
+            """
+            for b in (self.btn_first, self.btn_prev, self.btn_next, self.btn_last):
+                b.setStyleSheet(btn_style)
         else:
             self.table.setStyleSheet("""
                 QTableWidget {
@@ -177,4 +198,25 @@ class MoveHistoryPanel(QWidget):
                     font-weight: 700;
                 }
             """)
+            btn_style = """
+                QPushButton {
+                    background-color: #1e293b;
+                    color: #cbd5e1;
+                    border: 1px solid #334155;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 13px;
+                    padding: 4px 0px;
+                }
+                QPushButton:hover {
+                    background-color: #334155;
+                    color: #ffffff;
+                    border-color: #38bdf8;
+                }
+                QPushButton:pressed {
+                    background-color: #0f172a;
+                }
+            """
+            for b in (self.btn_first, self.btn_prev, self.btn_next, self.btn_last):
+                b.setStyleSheet(btn_style)
 

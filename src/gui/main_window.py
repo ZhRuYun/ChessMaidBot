@@ -81,14 +81,28 @@ class MainWindow(QMainWindow):
         llm_cfg = self._persisted_config.get("llm", {})
         self.controller.search_api_url = llm_cfg.get("search_api_url", "")
         self.controller.search_api_key = llm_cfg.get("search_api_key", "")
-        self.agent = agent or LLMAgent(
-            api_base=llm_cfg.get("api_base") or None,
-            api_key=llm_cfg.get("api_key") or None,
-            model=llm_cfg.get("model") or None,
-            reasoning_effort=llm_cfg.get("reasoning_effort") or None,
-            stream=llm_cfg.get("stream", False),
-            persona_prompt=self.current_persona,
-        )
+        if agent is None:
+            self.agent = LLMAgent(
+                api_base=llm_cfg.get("api_base") or None,
+                api_key=llm_cfg.get("api_key") or None,
+                model=llm_cfg.get("model") or None,
+                reasoning_effort=llm_cfg.get("reasoning_effort") or None,
+                stream=llm_cfg.get("stream", False),
+                persona_prompt=self.current_persona,
+            )
+        else:
+            self.agent = agent
+            if isinstance(self.agent, LLMAgent):
+                if not self.agent.api_key and llm_cfg.get("api_key"):
+                    self.agent.api_key = llm_cfg.get("api_key")
+                if self.agent.api_base == "https://api.deepseek.com" and llm_cfg.get("api_base"):
+                    self.agent.api_base = llm_cfg.get("api_base")
+                if self.agent.model == "deepseek-chat" and llm_cfg.get("model"):
+                    self.agent.model = llm_cfg.get("model")
+                if llm_cfg.get("reasoning_effort"):
+                    self.agent.reasoning_effort = llm_cfg.get("reasoning_effort")
+                if "stream" in llm_cfg:
+                    self.agent.stream = bool(llm_cfg["stream"])
         if isinstance(self.agent, LLMAgent) and "show_tool_records" in llm_cfg:
             self.agent.show_tool_records = bool(llm_cfg["show_tool_records"])
 
@@ -500,15 +514,16 @@ class MainWindow(QMainWindow):
             self.chat_panel.apply_theme(is_light)
         if hasattr(self, "control_bar"):
             self.control_bar.apply_theme(is_light)
-        if hasattr(self, "move_history"):
-            self.move_history.apply_theme(is_light)
+        if hasattr(self, "history_panel"):
+            self.history_panel.apply_theme(is_light)
 
         if theme_name == "浅色":
             self.setStyleSheet("""
                 QMainWindow { background-color: #f8fafc; }
                 QWidget { color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                QMessageBox { background-color: #ffffff; color: #0f172a; }
-                QMessageBox QPushButton { background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox, QInputDialog, QDialog { background-color: #ffffff; color: #0f172a; }
+                QMessageBox QPushButton, QInputDialog QPushButton, QDialog QPushButton { background-color: #e2e8f0; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox QLabel, QInputDialog QLabel, QDialog QLabel { color: #0f172a; }
                 QTableWidget { background-color: #ffffff; color: #0f172a; gridline-color: #e2e8f0; border: 1px solid #cbd5e1; }
                 QHeaderView::section { background-color: #f1f5f9; color: #475569; border-bottom: 1px solid #cbd5e1; }
                 QTextBrowser { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
@@ -521,8 +536,9 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("""
                 QMainWindow { background-color: #0b0f19; }
                 QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                QMessageBox { background-color: #1e222d; color: #f1f5f9; }
-                QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox, QInputDialog, QDialog { background-color: #1e222d; color: #f1f5f9; }
+                QMessageBox QPushButton, QInputDialog QPushButton, QDialog QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox QLabel, QInputDialog QLabel, QDialog QLabel { color: #f1f5f9; }
                 QTableWidget { background-color: #0f172a; color: #e2e8f0; gridline-color: #1e293b; border: 1px solid #1e293b; }
                 QHeaderView::section { background-color: #1e293b; color: #94a3b8; border-bottom: 1px solid #334155; }
                 QTextBrowser { background-color: #0b0f19; color: #e2e8f0; border: 1px solid #1e293b; }
@@ -532,8 +548,9 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("""
                 QMainWindow { background-color: #0b0f19; }
                 QWidget { color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                QMessageBox { background-color: #1e222d; color: #f1f5f9; }
-                QMessageBox QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox, QInputDialog, QDialog { background-color: #1e222d; color: #f1f5f9; }
+                QMessageBox QPushButton, QInputDialog QPushButton, QDialog QPushButton { background-color: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 4px; padding: 5px 12px; }
+                QMessageBox QLabel, QInputDialog QLabel, QDialog QLabel { color: #f1f5f9; }
                 QTableWidget { background-color: #0f172a; color: #e2e8f0; gridline-color: #1e293b; border: 1px solid #1e293b; }
                 QHeaderView::section { background-color: #1e293b; color: #94a3b8; border-bottom: 1px solid #334155; }
                 QTextBrowser { background-color: #0b0f19; color: #e2e8f0; border: 1px solid #1e293b; }

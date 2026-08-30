@@ -336,6 +336,48 @@ class LLMAgent(ChessAgent):
             base = f"{base}/v1"
         return f"{base}/chat/completions"
 
+    def _models_endpoint(self) -> str:
+        """拼装 Models 列表端点 URL"""
+        base = self.api_base.rstrip("/")
+        base_lower = base.lower()
+        is_ollama = ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
+        if is_ollama:
+            return f"{base}/api/tags"
+        if not base.endswith("/v1"):
+            base = f"{base}/v1"
+        return f"{base}/models"
+
+    @classmethod
+    def test_connection_and_fetch_models(cls, api_base: str, api_key: str, timeout: int = 10) -> list[str]:
+        """测试连接并拉取远端支持的模型列表 (静态/类方法，支持在对话框中即时调用)"""
+        base = (api_base or "https://api.deepseek.com").rstrip("/")
+        base_lower = base.lower()
+        is_ollama = ("ollama" in base_lower) or (":11434" in base_lower and not base_lower.endswith("/v1"))
+        url = f"{base}/api/tags" if is_ollama else (f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models")
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+
+        data = json.loads(body)
+        models = []
+        if is_ollama:
+            for item in data.get("models", []):
+                name = item.get("name") or item.get("model")
+                if name:
+                    models.append(name)
+        else:
+            for item in data.get("data", []):
+                m_id = item.get("id")
+                if m_id:
+                    models.append(m_id)
+
+        return models
+
     def get_move(self, request: AgentRequest) -> Optional[str]:
         """为女仆陪练模式 (VS_MAID_LLM) 计算下一步走法 (返回 UCI 格式字符串如 'e2e4')"""
         # 构建获取单步走法的专属 prompt

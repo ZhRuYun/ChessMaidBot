@@ -150,7 +150,18 @@ controller.set_teaching(triggers)
 
 ## 六、接入真实在线 LLM（DeepSeek / OpenAI 等）
 
-通过继承 `src.agents.base.ChessAgent` 即可快速接入：
+系统支持通过 GUI 界面中的「AI 综合设置」弹窗直接配置，亦支持环境变量或代码接入：
+
+### 6.1 GUI 综合设置与连通性测试
+在 GUI 顶部点击「AI 综合设置」即可配置：
+- **Base URL**：支持 DeepSeek、OpenAI、Ollama 本地服务等
+- **API Key**：支持明文/密文切换，持久化保存于 `data/settings.json`
+- **模型选择与拉取**：点击「测试连接并拉取模型」按钮可即时检验网络连通性并自动拉取支持的模型列表供下拉点选
+- **思考档位 (Reasoning Effort)**：支持 `auto`、`low`、`medium`、`high`、`max` 与 `none`
+- **流式响应**：支持 SSE 流式聚合
+
+### 6.2 代码扩展接入
+通过继承 `src.agents.base.ChessAgent` 即可自定义接入：
 
 ```python
 from src.agents.base import ChessAgent, AgentRequest
