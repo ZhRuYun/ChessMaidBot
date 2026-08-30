@@ -17,10 +17,11 @@ from src.gui.main_window import MainWindow
 
 def ensure_assets_ready():
     """检查引擎与数据库资产，如缺失则自动执行初始化脚本"""
+    from scripts.download_assets import is_valid_stockfish_binary, setup_databases, setup_stockfish
     needs_setup = False
 
     # 检查引擎
-    if not ENGINE_PATH.exists() or ENGINE_PATH.stat().st_size < 100000:
+    if not is_valid_stockfish_binary(ENGINE_PATH):
         needs_setup = True
 
     # 检查数据库
@@ -30,7 +31,6 @@ def ensure_assets_ready():
     if needs_setup:
         try:
             print("[INFO] 正在检测并自动补齐引擎与数据库资源...")
-            from scripts.download_assets import setup_databases, setup_stockfish
             setup_databases()
             setup_stockfish()
         except Exception as e:
